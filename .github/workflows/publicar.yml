@@ -1,0 +1,75 @@
+name: Publicar Posts Mishyo
+
+on:
+  schedule:
+    # 09:05 BRT (12:05 UTC)
+    - cron: '5 12 * * *'
+    # 13:05 BRT (16:05 UTC)
+    - cron: '5 16 * * *'
+    # 20:05 BRT (23:05 UTC)
+    - cron: '5 23 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Executar em modo simulação (--dry-run)'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: maquina-publicador
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar Composio CLI
+        run: |
+          curl -fsSL https://composio.dev/install | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.composio" >> $GITHUB_PATH
+
+      - name: Autenticar Composio
+        env:
+          COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
+        run: |
+          composio login --user-api-key "$COMPOSIO_API_KEY" -y --no-skill-install
+          composio whoami
+
+      - name: Executar testes unitários
+        run: |
+          python3 -m unittest discover tests/
+
+      - name: Executar Publicador
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            echo "Modo simulação ativado (--dry-run)"
+            python3 scripts/maquina_publicador.py --fonte=drive --dry-run
+          else
+            python3 scripts/maquina_publicador.py --fonte=drive
+          fi
+
+      - name: Registrar histórico no repositório
+        if: success()
+        run: |
+          if [ -n "$(git status --porcelain historico/LOG.md)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add historico/LOG.md
+            git commit -m "log(maquina): registrar publicacao no historico [skip ci]"
+            git push
+          fi
