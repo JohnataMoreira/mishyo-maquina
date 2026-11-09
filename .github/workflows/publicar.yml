@@ -3,11 +3,11 @@ name: Publicar Posts Mishyo
 on:
   schedule:
     # 09:05 BRT (12:05 UTC)
-    - cron: '5 12 * * *'
+    - cron: '17,37,57 12 * * *'
     # 13:05 BRT (16:05 UTC)
-    - cron: '5 16 * * *'
+    - cron: '17,37,57 16 * * *'
     # 20:05 BRT (23:05 UTC)
-    - cron: '5 23 * * *'
+    - cron: '17,37,57 23 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
