@@ -69,6 +69,15 @@ TZ_BRT = timezone(timedelta(hours=-3))
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 ESPERA_ESPELHO_S = 90
 INTERVALO_MINIMO_S = 2 * 3600  # No mínimo 2 horas entre posts publicados
+ATRASO_MAXIMO_S = 2 * 3600  # Item vencido há mais de 2h não sai sozinho: só reconcilia o que já está no ar
+
+
+def houve_post_novo(antes: dict, depois: dict) -> bool:
+    """True se a rodada criou post novo pela API (e não só reconheceu um que já estava no ar)."""
+    return any(
+        depois.get(f"{c}_origem") == "api" and antes.get(f"{c}_id") != depois.get(f"{c}_id")
+        for c in ("ig", "fb", "th")
+    )
 
 
 def agora_brt():
@@ -346,8 +355,12 @@ def esperar_container(cont, pid, limite_s=300):
     raise RuntimeError(f"vídeo ainda em processamento depois de {limite_s}s; nova tentativa na próxima rodada")
 
 
-def publicar_item(post, pasta_post, seco=False):
-    """Executa a publicação nos 3 canais de um post pronto."""
+def publicar_item(post, pasta_post, seco=False, so_reconciliar=False):
+    """Executa a publicação nos 3 canais de um post pronto.
+
+    so_reconciliar=True (item atrasado demais): só registra o post se ele já estiver no Instagram;
+    se não estiver, devolve 3 e não publica nada.
+    """
     pid = post["id"]
     k = chave(post["legenda"])
     formato = post.get("formato", "carrossel").lower()
@@ -376,6 +389,10 @@ def publicar_item(post, pasta_post, seco=False):
             if not seco:
                 salvar_estado(estado)
             log(f"[{pid}] já estava no Instagram: {achado.get('permalink')}")
+
+    if so_reconciliar and not st.get("ig_id"):
+        log(f"[{pid}] atrasado demais para sair sozinho e não está no Instagram: fica para o Johnata decidir")
+        return 3
 
     if seco:
         fb = any(chave(p.get("message")) == k for p in recentes_fb())
@@ -1027,14 +1044,26 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                         "canonical_url": row.get("canonical_url") or "",
                     }
 
+                atrasado = (agora - dt_quando).total_seconds() > ATRASO_MAXIMO_S
+                antes = dict(carregar_estado().get(pid, {}))
                 if marca_id == "johnata":
+                    if atrasado:
+                        log(f"[{pid}] Johnata: atrasado demais para sair sozinho; fica para o Johnata decidir")
+                        continue
                     rc = publicar_item_johnata(post_data, pasta_post, canais_solicitados=row.get("canais"), seco=seco)
                 else:
-                    rc = publicar_item(post_data, pasta_post, seco=seco)
+                    rc = publicar_item(post_data, pasta_post, seco=seco, so_reconciliar=atrasado)
+
+                if rc == 3:
+                    continue  # atrasado e fora do ar: não publica conteúdo fora de hora
 
                 if rc == 0 and not seco:
                     if DRIVE_WORKSPACE:
                         DRIVE_WORKSPACE.mark_published(Path(fpath), pid)
+                    if marca_id == "mishyo" and not houve_post_novo(antes, carregar_estado().get(pid, {})):
+                        # Só reconheceu um post que já estava no ar: não conta para o intervalo nem encerra a rodada.
+                        log(f"[{pid}] reconciliado (já estava no ar); seguindo a fila")
+                        continue
                     ultimo_ts = agora_brt()
                     break
                 elif rc != 0 and not seco:

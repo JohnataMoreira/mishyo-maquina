@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import unittest
 import urllib.error
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -104,8 +105,9 @@ class TestMaquinaMultimarca(unittest.TestCase):
         with open(csv_file, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["id", "quando", "status", "titulo", "legenda", "canais"])
-            w.writerow(["post-rascunho", "2026-11-09 10:00", "rascunho", "Rascunho", "Texto", "linkedin"])
-            w.writerow(["post-aprovado", "2026-11-09 10:00", "aprovado", "Aprovado", "Texto", "linkedin"])
+            recente = (mp.agora_brt() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M")
+            w.writerow(["post-rascunho", recente, "rascunho", "Rascunho", "Texto", "linkedin"])
+            w.writerow(["post-aprovado", recente, "aprovado", "Aprovado", "Texto", "linkedin"])
 
         chamados = []
 
@@ -169,6 +171,65 @@ class TestMaquinaMultimarca(unittest.TestCase):
             self.assertEqual(rows[0]["th_reposts"], "3")
 
 
+class TestFilaReconciliacaoEAtraso(unittest.TestCase):
+    """Reconciliar post que já estava no ar não conta como post novo; item atrasado não sai sozinho."""
+
+    setUp = TestMaquinaMultimarca.setUp
+    tearDown = TestMaquinaMultimarca.tearDown
+
+    def _fila(self, linhas):
+        fila_dir = os.path.join(self.temp_dir, "fila_mishyo")
+        os.makedirs(fila_dir, exist_ok=True)
+        csv_file = os.path.join(fila_dir, "fila.csv")
+        with open(csv_file, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "quando", "status"])
+            for pid, minutos_atras in linhas:
+                quando = (mp.agora_brt() - timedelta(minutes=minutos_atras)).strftime("%Y-%m-%d %H:%M")
+                w.writerow([pid, quando, "agendado"])
+        return csv_file
+
+    def _rodar(self, csv_file, fake):
+        with patch("maquina_publicador.conferir_site_no_ar", return_value=(True, None)), \
+             patch("maquina_publicador.conferir_travas_gerais"), \
+             patch("maquina_publicador.coletar_metricas"), \
+             patch("maquina_publicador.conferente_de_canais"), \
+             patch("maquina_publicador.publicar_item", side_effect=fake):
+            return mp.executar_fila_marca("mishyo", caminho_fila_csv=csv_file, seco=False)
+
+    def test_reconciliacao_nao_conta_para_intervalo(self):
+        csv_file = self._fila([("antigo-no-ar", 100), ("hoje", 30), ("depois", 20)])
+        chamados = []
+
+        def fake(post, pasta, seco=False, so_reconciliar=False):
+            chamados.append(post["id"])
+            estado = mp.carregar_estado()
+            origem = "ja-existia" if post["id"] == "antigo-no-ar" else "api"
+            estado[post["id"]] = {"ig_id": f"ig-{post['id']}", "ig_origem": origem,
+                                  "ig_quando": mp.agora_brt().strftime("%Y-%m-%d %H:%M")}
+            mp.salvar_estado(estado)
+            return 0
+
+        self.assertEqual(self._rodar(csv_file, fake), 0)
+        # O antigo só foi reconhecido; o de hoje saiu; o seguinte espera o intervalo de 2h.
+        self.assertEqual(chamados, ["antigo-no-ar", "hoje"])
+
+    def test_item_atrasado_nao_sai_sozinho(self):
+        csv_file = self._fila([("atrasado-5h", 300), ("hoje", 30)])
+        chamadas = []
+
+        def fake(post, pasta, seco=False, so_reconciliar=False):
+            chamadas.append((post["id"], so_reconciliar))
+            if so_reconciliar:
+                return 3  # não estava no ar: não publica fora de hora
+            estado = mp.carregar_estado()
+            estado[post["id"]] = {"ig_id": "ig-novo", "ig_origem": "api",
+                                  "ig_quando": mp.agora_brt().strftime("%Y-%m-%d %H:%M")}
+            mp.salvar_estado(estado)
+            return 0
+
+        self.assertEqual(self._rodar(csv_file, fake), 0)
+        self.assertEqual(chamadas, [("atrasado-5h", True), ("hoje", False)])
+
 if __name__ == "__main__":
     unittest.main()
-
