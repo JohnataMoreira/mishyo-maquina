@@ -28,22 +28,56 @@ C = shutil.which("composio") or os.path.expanduser("~/.composio/composio")
 IG_ACCOUNT = "instagram_yacht-coarse"
 TH_ACCOUNT = "threads_ungone-cocky"
 DRIVE_ACCOUNT = "googledrive_gleg-darken"
+LINKEDIN_ACCOUNT = "linkedin_cheki-suburb"
+LINKEDIN_AUTHOR_URN = "urn:li:person:OMoz1tzc7G"
+DEVTO_ACCOUNT = "devto_looby-amor"
+
 IG_USER_ID = "29586430714275170"
 FB_PAGE_ID = "1058406010693067"
+
+MARCAS = {
+    "mishyo": {
+        "nome": "Mishyo",
+        "root_folder": "Mishyo · Conteúdo das redes",
+        "site_url": "https://mishyo.com",
+        "status_validos": {"aprovado", "agendado"},
+        "canais_padrao": ["instagram", "facebook", "threads"],
+        "drive_base": os.path.expanduser(
+            "~/Library/CloudStorage/GoogleDrive-johvsm@gmail.com/Meu Drive/Mishyo · Conteúdo das redes/fila"
+        ),
+    },
+    "johnata": {
+        "nome": "Johnata",
+        "root_folder": "Johnata · Conteúdo",
+        "site_url": "https://johnatamoreira.com.br",
+        "status_validos": {"aprovado"},
+        "canais_padrao": ["linkedin", "devto"],
+        "drive_base": os.path.expanduser(
+            "~/Library/CloudStorage/GoogleDrive-johvsm@gmail.com/Meu Drive/Johnata · Conteúdo/fila"
+        ),
+    },
+}
 
 BASE = os.path.expanduser("~/.mishyo_logs/maquina")
 STATE = os.path.join(BASE, "estado.json")
 LOGF = os.path.join(BASE, "publicador.log")
 REPO_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "historico", "LOG.md")
-DRIVE_BASE = os.path.expanduser(
-    "~/Library/CloudStorage/GoogleDrive-johvsm@gmail.com/Meu Drive/Mishyo · Conteúdo das redes/fila"
-)
+DRIVE_BASE = MARCAS["mishyo"]["drive_base"]
 DRIVE_WORKSPACE = None
 
 TZ_BRT = timezone(timedelta(hours=-3))
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 ESPERA_ESPELHO_S = 90
 INTERVALO_MINIMO_S = 2 * 3600  # No mínimo 2 horas entre posts publicados
+ATRASO_MAXIMO_S = 2 * 3600  # Item vencido há mais de 2h não sai sozinho: só reconcilia o que já está no ar
+
+
+def houve_post_novo(antes: dict, depois: dict) -> bool:
+    """True se a rodada criou post novo pela API (e não só reconheceu um que já estava no ar)."""
+    return any(
+        depois.get(f"{c}_origem") == "api" and antes.get(f"{c}_id") != depois.get(f"{c}_id")
+        for c in ("ig", "fb", "th")
+    )
 
 
 def agora_brt():
@@ -51,8 +85,9 @@ def agora_brt():
 
 
 def item_vencido_para_espelho(row):
-    """Evita baixar post.json de itens futuros: a fila continua sendo a fonte de verdade."""
-    if row.get("status", "agendado").strip().lower() == "pausado":
+    """Evita baixar post.json de itens futuros ou já finalizados/pausados."""
+    st = row.get("status", "agendado").strip().lower()
+    if st in ("pausado", "rascunho", "publicado", "concluido"):
         return False
     try:
         quando = datetime.strptime(row.get("quando", "").strip(), "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
@@ -69,10 +104,16 @@ def log(msg):
         f.write(line + "\n")
 
 
-def log_repo(mensagem):
-    """Registra uma linha no LOG.md do qg-manus-bridge."""
+def log_repo(mensagem, status="✅ Concluída"):
+    """Registra uma linha no LOG.md do repositório."""
     hoje = f"{agora_brt():%Y-%m-%d}"
-    linha = f"| {hoje} | MAQUINA | {mensagem} | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |\n"
+    linha = f"| {hoje} | MAQUINA | {mensagem} | {status} | `~/.mishyo_logs/maquina/estado.json` | — |\n"
+    try:
+        os.makedirs(os.path.dirname(REPO_LOG), exist_ok=True)
+        with open(REPO_LOG, "a", encoding="utf-8") as f:
+            f.write(linha)
+    except Exception as e:
+        log(f"aviso: falha ao escrever no LOG.md ({e})")
     try:
         os.makedirs(os.path.dirname(REPO_LOG), exist_ok=True)
         with open(REPO_LOG, "a", encoding="utf-8") as f:
@@ -152,7 +193,77 @@ def id_drive(caminho):
     raise RuntimeError(f"lâmina sem ID do Drive (ainda sincronizando?): {caminho}")
 
 
-def conferir_travas_gerais(seco=False):
+def normalizar_fb_id(post_id, page_id=FB_PAGE_ID):
+    """Garante que o ID do Facebook tenha o prefixo {page_id}_{post_id} para insights e chamadas."""
+    if not post_id or post_id == "sem-id":
+        return post_id
+    s = str(post_id).strip()
+    if "_" in s:
+        return s
+    return f"{page_id}_{s}"
+
+
+def conferir_site_no_ar(url):
+    """Verifica se o site da marca está respondendo 200 OK. Retorna (True, None) ou (False, motivo)."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 maquina-de-posts"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            if r.status == 200:
+                return True, None
+            return False, f"HTTP {r.status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code} ({exc.reason})"
+    except Exception as exc:
+        return False, f"Inacessível ({exc})"
+
+
+def registrar_falha_janela(marca: str, motivo: str):
+    """Registra falha de tentativa da janela e dispara alerta na 3ª falha consecutiva."""
+    agora = agora_brt()
+    chave_janela = f"{agora:%Y-%m-%d}_{agora.hour:02d}h_{marca}"
+    estado = carregar_estado()
+    st_janelas = estado.setdefault("_janelas_falhas", {})
+    dados = st_janelas.setdefault(chave_janela, {"tentativas": 0, "motivos": [], "avisado": False})
+    dados["tentativas"] += 1
+    dados["motivos"].append(f"{agora:%H:%M:%S}: {motivo}")
+    salvar_estado(estado)
+    log(f"[{marca}] Tentativa {dados['tentativas']}/3 com falha na janela {chave_janela}: {motivo}")
+
+    if dados["tentativas"] >= 3 and not dados.get("avisado"):
+        dados["avisado"] = True
+        salvar_estado(estado)
+        disparar_aviso_falha(chave_janela, dados["motivos"])
+
+
+def disparar_aviso_falha(janela: str, motivos: list[str]):
+    """Dispara aviso ao Johnata quando as 3 tentativas de uma janela falharem."""
+    titulo = f"⚠️ [Alerta Máquina de Posts] Falha nas 3 tentativas da janela {janela}"
+    corpo = (
+        f"A Máquina de Posts falhou em todas as 3 tentativas programadas para a janela **{janela}**.\n\n"
+        f"### Motivos registrados:\n"
+        + "\n".join(f"- {m}" for m in motivos)
+        + "\n\n*Aviso automático gerado sem custos nem segredos novos via GitHub.*"
+    )
+    log(f"ALERTA: {titulo}")
+    log_repo(f"ALERTA: 3 tentativas falharam na janela {janela}", status="❌ Falha 3x")
+    try:
+        gh_bin = shutil.which("gh")
+        if gh_bin:
+            res = subprocess.run(
+                [gh_bin, "issue", "create", "--title", titulo, "--body", corpo],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if res.returncode == 0:
+                log(f"Issue criada com sucesso: {res.stdout.strip()}")
+            else:
+                log(f"aviso: gh issue create retornou {res.returncode}: {res.stderr.strip()[:200]}")
+    except Exception as exc:
+        log(f"aviso: não foi possível criar issue no GitHub ({exc})")
+
+
+def conferir_travas_gerais(seco=False, url_site=None):
     """Confere status do site e janela de horário."""
     agora = agora_brt()
     if 0 <= agora.hour < 7:
@@ -161,10 +272,10 @@ def conferir_travas_gerais(seco=False):
         else:
             raise RuntimeError(f"Janela de horário bloqueada: {agora.hour}h (nada sai entre 0h e 7h)")
 
-    req = urllib.request.Request("https://mishyo.com", headers={"User-Agent": "Mozilla/5.0 maquina-de-posts"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        if r.status != 200:
-            raise RuntimeError(f"mishyo.com respondeu {r.status} (site fora do ar)")
+    if url_site:
+        ok, motivo = conferir_site_no_ar(url_site)
+        if not ok:
+            raise RuntimeError(f"{url_site} fora do ar: {motivo}")
 
 
 def conferir_limite_publicacao():
@@ -184,32 +295,37 @@ def conferir_limite_publicacao():
     return None, None
 
 
-def conferir_post(post):
-    """Valida as regras de conteúdo e copy."""
-    tags = [t.lower() for t in re.findall(r"#\w+", post.get("legenda", ""))]
-    if len(tags) > 5 or "#mishyo" not in tags:
-        raise RuntimeError(f"hashtags fora da regra (máximo 5 e sempre #mishyo): {tags}")
-    
-    threads_texto = post.get("threads_texto", "")
-    if len(threads_texto.encode("utf-8")) > 500:
-        raise RuntimeError(f"texto do Threads passa de 500 bytes ({len(threads_texto.encode('utf-8'))} bytes)")
-    if re.search(r"#\w+", threads_texto):
-        raise RuntimeError("hashtag no texto do Threads: use threads_tag")
-    if chave(post.get("legenda", ""))[:30] != chave(threads_texto)[:30]:
-        raise RuntimeError("legenda e texto do Threads precisam começar igual (anti-duplicação)")
+def conferir_post(post, marca="mishyo"):
+    """Valida as regras de conteúdo e copy conforme a marca."""
+    if marca == "mishyo":
+        tags = [t.lower() for t in re.findall(r"#\w+", post.get("legenda", ""))]
+        if len(tags) > 5 or "#mishyo" not in tags:
+            raise RuntimeError(f"hashtags fora da regra (máximo 5 e sempre #mishyo): {tags}")
 
-    formato = post.get("formato", "carrossel").lower()
-    laminas = post.get("laminas", [])
-    alt = post.get("alt", [])
+        threads_texto = post.get("threads_texto", "")
+        if len(threads_texto.encode("utf-8")) > 500:
+            raise RuntimeError(f"texto do Threads passa de 500 bytes ({len(threads_texto.encode('utf-8'))} bytes)")
+        if re.search(r"#\w+", threads_texto):
+            raise RuntimeError("hashtag no texto do Threads: use threads_tag")
+        if chave(post.get("legenda", ""))[:30] != chave(threads_texto)[:30]:
+            raise RuntimeError("legenda e texto do Threads precisam começar igual (anti-duplicação)")
 
-    if formato == "carrossel":
-        if not 2 <= len(laminas) <= 10:
-            raise RuntimeError(f"carrossel deve ter de 2 a 10 lâminas: {len(laminas)}")
-        if len(alt) != len(laminas):
-            raise RuntimeError(f"lâminas ({len(laminas)}) e textos alternativos ({len(alt)}) não batem")
-    elif formato in ("imagem", "video"):
-        if len(laminas) < 1:
-            raise RuntimeError("post precisa de pelo menos 1 arquivo de mídia")
+        formato = post.get("formato", "carrossel").lower()
+        laminas = post.get("laminas", [])
+        alt = post.get("alt", [])
+
+        if formato == "carrossel":
+            if not 2 <= len(laminas) <= 10:
+                raise RuntimeError(f"carrossel deve ter de 2 a 10 lâminas: {len(laminas)}")
+            if len(alt) != len(laminas):
+                raise RuntimeError(f"lâminas ({len(laminas)}) e textos alternativos ({len(alt)}) não batem")
+        elif formato in ("imagem", "video"):
+            if len(laminas) < 1:
+                raise RuntimeError("post precisa de pelo menos 1 arquivo de mídia")
+    elif marca == "johnata":
+        titulo = post.get("titulo") or post.get("title") or post.get("id")
+        if not titulo:
+            raise RuntimeError("post do Johnata precisa de título ou id")
 
 
 def recentes_ig(limit=15):
@@ -239,8 +355,12 @@ def esperar_container(cont, pid, limite_s=300):
     raise RuntimeError(f"vídeo ainda em processamento depois de {limite_s}s; nova tentativa na próxima rodada")
 
 
-def publicar_item(post, pasta_post, seco=False):
-    """Executa a publicação nos 3 canais de um post pronto."""
+def publicar_item(post, pasta_post, seco=False, so_reconciliar=False):
+    """Executa a publicação nos 3 canais de um post pronto.
+
+    so_reconciliar=True (item atrasado demais): só registra o post se ele já estiver no Instagram;
+    se não estiver, devolve 3 e não publica nada.
+    """
     pid = post["id"]
     k = chave(post["legenda"])
     formato = post.get("formato", "carrossel").lower()
@@ -269,6 +389,10 @@ def publicar_item(post, pasta_post, seco=False):
             if not seco:
                 salvar_estado(estado)
             log(f"[{pid}] já estava no Instagram: {achado.get('permalink')}")
+
+    if so_reconciliar and not st.get("ig_id"):
+        log(f"[{pid}] atrasado demais para sair sozinho e não está no Instagram: fica para o Johnata decidir")
+        return 3
 
     if seco:
         fb = any(chave(p.get("message")) == k for p in recentes_fb())
@@ -339,16 +463,19 @@ def publicar_item(post, pasta_post, seco=False):
                 if formato == "carrossel":
                     d = run("FACEBOOK_CREATE_MULTI_PHOTO_POST",
                             {"page_id": FB_PAGE_ID, "photo_urls": urls, "message": post["legenda"]}).get("data") or {}
-                    st.update(fb_id=d.get("id") or d.get("post_id") or "sem-id", fb_origem="api")
+                    raw_id = d.get("id") or d.get("post_id") or "sem-id"
+                    st.update(fb_id=normalizar_fb_id(raw_id), fb_origem="api")
                 elif formato == "imagem":
                     d = run("FACEBOOK_CREATE_PHOTO_POST",
                             {"page_id": FB_PAGE_ID, "url": urls[0], "message": post["legenda"]}).get("data") or {}
-                    st.update(fb_id=d.get("id") or d.get("post_id") or "sem-id", fb_origem="api")
+                    raw_id = d.get("id") or d.get("post_id") or "sem-id"
+                    st.update(fb_id=normalizar_fb_id(raw_id), fb_origem="api")
                 elif formato == "video":
                     d = run("FACEBOOK_CREATE_VIDEO_POST",
                             {"page_id": FB_PAGE_ID, "file_url": urls[0], "description": post["legenda"],
                              "title": post.get("titulo", "Mishyo")}).get("data") or {}
-                    st.update(fb_id=d.get("id") or d.get("video_id") or "sem-id", fb_origem="api")
+                    raw_id = d.get("id") or d.get("video_id") or "sem-id"
+                    st.update(fb_id=normalizar_fb_id(raw_id), fb_origem="api")
             salvar_estado(estado)
             log(f"[{pid}] Facebook: {st.get('fb_origem')} ({st.get('fb_id')})")
         except Exception as e:
@@ -392,6 +519,105 @@ def publicar_item(post, pasta_post, seco=False):
         return 1
 
     msg_log = f"{pid} publicado nos 3 canais: IG {st.get('ig_id')} ({st.get('ig_origem')}), FB {st.get('fb_id')} ({st.get('fb_origem')}), TH {st.get('th_id')} ({st.get('th_origem')})"
+    log(f"[{pid}] {msg_log}")
+    log_repo(msg_log)
+    return 0
+
+
+def publicar_item_johnata(post, pasta_post, canais_solicitados=None, seco=False):
+    """Executa a publicação nos canais do Johnata (LinkedIn, dev.to, etc.)."""
+    pid = post.get("id", "post-johnata")
+    conferir_post(post, marca="johnata")
+
+    raw_canais = canais_solicitados or post.get("canais") or ["linkedin", "devto"]
+    if isinstance(raw_canais, str):
+        canais = [c.strip().lower() for c in raw_canais.split(",") if c.strip()]
+    else:
+        canais = [str(c).strip().lower() for c in raw_canais]
+
+    log(f"[{pid}] Johnata: canais solicitados = {canais}{' (simulação)' if seco else ''}")
+
+    canais_auto = []
+    for c in canais:
+        if c == "reddit-manual":
+            log(f"[{pid}] [reddit-manual] Canal manual: rascunho fica na fila para postagem manual pelo Johnata.")
+        elif c == "site":
+            log(f"[{pid}] [site] Publicação no blog aguarda conclusão da SITE-007.")
+        elif c in ("facebook", "facebook-pessoal"):
+            log(f"[{pid}] [facebook] API não publica em perfil pessoal; canal ignorado conforme G1.")
+        elif c in ("instagram", "instagram-pessoal"):
+            log(f"[{pid}] [instagram] Conta pessoal @johnatavinicius aguarda conexão no Composio.")
+        else:
+            canais_auto.append(c)
+
+    if not canais_auto:
+        log(f"[{pid}] Nenhum canal automatizado para publicar nesta rodada.")
+        return 0
+
+    if seco:
+        log(f"[{pid}] [simulação] Johnata publicaria em: {canais_auto}")
+        return 0
+
+    estado = carregar_estado()
+    st = estado.setdefault(pid, {})
+    falhas = []
+
+    # 1. LinkedIn
+    if "linkedin" in canais_auto and not st.get("linkedin_id"):
+        try:
+            texto = post.get("legenda") or post.get("texto") or post.get("body_markdown") or ""
+            if not texto:
+                raise RuntimeError("Post sem texto para o LinkedIn")
+            if len(texto) > 3000:
+                texto = texto[:2990] + "..."
+            payload = {
+                "author": LINKEDIN_AUTHOR_URN,
+                "commentary": texto,
+                "visibility": "PUBLIC",
+            }
+            res = run("LINKEDIN_CREATE_LINKED_IN_POST", payload, LINKEDIN_ACCOUNT)
+            data = res.get("data", {})
+            lid = data.get("id") or data.get("post_id") or "publicado"
+            st.update(linkedin_id=lid, linkedin_quando=f"{agora_brt():%Y-%m-%d %H:%M}", linkedin_origem="api")
+            salvar_estado(estado)
+            log(f"[{pid}] LinkedIn publicado com sucesso: {lid}")
+        except Exception as exc:
+            falhas.append(f"linkedin: {exc}")
+            log(f"[{pid}] FALHA no LinkedIn: {exc}")
+
+    # 2. dev.to
+    if "devto" in canais_auto and not st.get("devto_id"):
+        try:
+            titulo = post.get("titulo") or post.get("title") or pid
+            corpo = post.get("body_markdown") or post.get("conteudo") or post.get("legenda") or ""
+            tags = post.get("tags") or ["ai", "coding", "software"]
+            if isinstance(tags, str):
+                tags = [t.strip().replace("#", "") for t in tags.split(",") if t.strip()][:4]
+            payload = {
+                "title": titulo,
+                "body_markdown": corpo,
+                "tags": tags[:4],
+                "published": True,
+            }
+            if post.get("canonical_url"):
+                payload["canonical_url"] = post["canonical_url"]
+            res = run("DEVTO_CREATE_ARTICLE", payload, DEVTO_ACCOUNT)
+            data = res.get("data", {})
+            devto_id = data.get("id") or "publicado"
+            devto_url = data.get("url")
+            st.update(devto_id=devto_id, devto_url=devto_url, devto_quando=f"{agora_brt():%Y-%m-%d %H:%M}", devto_origem="api")
+            salvar_estado(estado)
+            log(f"[{pid}] dev.to publicado com sucesso ({devto_id}): {devto_url}")
+        except Exception as exc:
+            falhas.append(f"devto: {exc}")
+            log(f"[{pid}] FALHA no dev.to: {exc}")
+
+    salvar_estado(estado)
+    if falhas:
+        log(f"[{pid}] Terminou com falhas: {falhas}")
+        return 1
+
+    msg_log = f"{pid} publicado (Johnata): " + ", ".join(canais_auto)
     log(f"[{pid}] {msg_log}")
     log_repo(msg_log)
     return 0
@@ -533,134 +759,204 @@ def conferente_de_canais():
     log("Conferente concluído.")
 
 
-def coletar_metricas(pasta_semana=None):
+def coletar_metricas(marca="mishyo", pasta_semana=None):
     """Coleta métricas de 24h e 7d de posts publicados."""
-    log("Iniciando coleta de métricas...")
+    log(f"Iniciando coleta de métricas ({marca})...")
     estado = carregar_estado()
     agora = agora_brt()
     modificado = False
 
-    csv_path = os.path.join(pasta_semana or DRIVE_BASE, "metricas.csv")
-    cabecalho = [
-        "post_id", "tipo", "data_post", "data_coleta",
-        "ig_views", "ig_reach", "ig_likes", "ig_comments", "ig_saved", "ig_shares",
-        "fb_views", "fb_unique_views",
-        "th_views", "th_likes", "th_replies", "th_reposts", "th_shares"
-    ]
+    base_dir = pasta_semana or (DRIVE_BASE if DRIVE_BASE else MARCAS[marca]["drive_base"])
+    csv_path = os.path.join(base_dir, "metricas.csv")
 
-    for pid, dados in estado.items():
-        quando_str = dados.get("ig_quando")
-        if not quando_str:
-            continue
-        try:
-            dt_post = datetime.strptime(quando_str, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
-        except Exception:
-            continue
+    if marca == "mishyo":
+        cabecalho = [
+            "post_id", "tipo", "data_post", "data_coleta",
+            "ig_views", "ig_reach", "ig_likes", "ig_comments", "ig_saved", "ig_shares",
+            "fb_views", "fb_unique_views",
+            "th_views", "th_likes", "th_replies", "th_reposts", "th_shares"
+        ]
 
-        idade_h = (agora - dt_post).total_seconds() / 3600
+        for pid, dados in estado.items():
+            quando_str = dados.get("ig_quando")
+            if not quando_str:
+                continue
+            try:
+                dt_post = datetime.strptime(quando_str, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
+            except Exception:
+                continue
 
-        # Checa 24h (entre 24h e 48h) e 7d (entre 168h e 192h)
-        alvos = []
-        if idade_h >= 24 and not dados.get("metricas_24h"):
-            alvos.append("24h")
-        if idade_h >= 168 and not dados.get("metricas_7d"):
-            alvos.append("7d")
+            idade_h = (agora - dt_post).total_seconds() / 3600
 
-        for tipo in alvos:
-            log(f"[metricas] Coletando métricas {tipo} para {pid}...")
-            ig_m = {}
-            if dados.get("ig_id"):
-                try:
-                    res = run("INSTAGRAM_GET_IG_MEDIA_INSIGHTS",
-                              {"ig_media_id": dados["ig_id"], "metric": ["views", "reach", "likes", "comments", "saved", "shares"]},
-                              IG_ACCOUNT)
-                    for item in res.get("data", {}).get("data", []):
-                        nome = item.get("name")
-                        val = (item.get("values") or [{}])[0].get("value", 0)
-                        ig_m[nome] = val
-                except Exception as e:
-                    log(f"[metricas] erro IG {pid}: {e}")
+            alvos = []
+            if idade_h >= 24 and not dados.get("metricas_24h"):
+                alvos.append("24h")
+            if idade_h >= 168 and not dados.get("metricas_7d"):
+                alvos.append("7d")
 
-            fb_m = {}
-            if dados.get("fb_id") and dados.get("fb_origem") != "ja-existia":
-                try:
-                    res = run("FACEBOOK_GET_POST_INSIGHTS",
-                              {"post_id": dados["fb_id"], "metrics": "post_media_view,post_total_media_view_unique"})
-                    for item in res.get("data", {}).get("data", []):
-                        nome = item.get("name")
-                        val = (item.get("values") or [{}])[0].get("value", 0)
-                        fb_m[nome] = val
-                except Exception as e:
-                    log(f"[metricas] erro FB {pid}: {e}")
+            for tipo in alvos:
+                log(f"[metricas] Coletando métricas {tipo} para {pid} (Mishyo)...")
+                ig_m = {}
+                if dados.get("ig_id"):
+                    try:
+                        res = run("INSTAGRAM_GET_IG_MEDIA_INSIGHTS",
+                                  {"ig_media_id": dados["ig_id"], "metric": ["views", "reach", "likes", "comments", "saved", "shares"]},
+                                  IG_ACCOUNT)
+                        for item in res.get("data", {}).get("data", []):
+                            nome = item.get("name")
+                            val = (item.get("values") or [{}])[0].get("value", 0)
+                            ig_m[nome] = val
+                    except Exception as e:
+                        log(f"[metricas] erro IG {pid}: {e}")
 
-            th_m = {}
-            if dados.get("th_id") and dados.get("th_origem") != "ja-existia":
-                try:
-                    res = run("THREADS_GET_POST_INSIGHTS",
-                              {"post_id": dados["th_id"], "metrics": ["views", "likes", "replies", "reposts", "shares"]},
-                              TH_ACCOUNT)
-                    for item in res.get("data", {}).get("data", []):
-                        nome = item.get("name")
-                        val = (item.get("values") or [{}])[0].get("value", 0)
-                        th_m[nome] = val
-                except Exception as e:
-                    log(f"[metricas] erro TH {pid}: {e}")
+                fb_m = {}
+                if dados.get("fb_id") and dados.get("fb_origem") != "ja-existia":
+                    try:
+                        fb_post_id = normalizar_fb_id(dados["fb_id"])
+                        res = run("FACEBOOK_GET_POST_INSIGHTS",
+                                  {"post_id": fb_post_id, "metrics": "post_media_view,post_total_media_view_unique"})
+                        for item in res.get("data", {}).get("data", []):
+                            nome = item.get("name")
+                            val = (item.get("values") or [{}])[0].get("value", 0)
+                            fb_m[nome] = val
+                    except Exception as e:
+                        log(f"[metricas] erro FB {pid}: {e}")
 
-            # Registra no CSV
-            linha = [
-                pid, tipo, quando_str, f"{agora:%Y-%m-%d %H:%M}",
-                ig_m.get("views", ""), ig_m.get("reach", ""), ig_m.get("likes", ""), ig_m.get("comments", ""), ig_m.get("saved", ""), ig_m.get("shares", ""),
-                fb_m.get("post_media_view", ""), fb_m.get("post_total_media_view_unique", ""),
-                th_m.get("views", ""), th_m.get("likes", ""), th_m.get("replies", ""), th_m.get("reposts", ""), th_m.get("shares", "")
-            ]
+                th_m = {}
+                if dados.get("th_id") and dados.get("th_origem") != "ja-existia":
+                    try:
+                        res = run("THREADS_GET_POST_INSIGHTS",
+                                  {"post_id": dados["th_id"], "metrics": ["views", "likes", "replies", "reposts", "shares"]},
+                                  TH_ACCOUNT)
+                        # O Threads devolve lista em data["metrics"] com cada elemento contendo "value"
+                        for item in res.get("data", {}).get("metrics", []):
+                            nome = item.get("name")
+                            val = item.get("value", 0)
+                            th_m[nome] = val
+                    except Exception as e:
+                        log(f"[metricas] erro TH {pid}: {e}")
 
-            escrever_cabecalho = not os.path.exists(csv_path)
-            with open(csv_path, "a", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                if escrever_cabecalho:
-                    w.writerow(cabecalho)
-                w.writerow(linha)
+                linha = [
+                    pid, tipo, quando_str, f"{agora:%Y-%m-%d %H:%M}",
+                    ig_m.get("views", ""), ig_m.get("reach", ""), ig_m.get("likes", ""), ig_m.get("comments", ""), ig_m.get("saved", ""), ig_m.get("shares", ""),
+                    fb_m.get("post_media_view", ""), fb_m.get("post_total_media_view_unique", ""),
+                    th_m.get("views", ""), th_m.get("likes", ""), th_m.get("replies", ""), th_m.get("reposts", ""), th_m.get("shares", "")
+                ]
 
-            dados[f"metricas_{tipo}"] = f"{agora:%Y-%m-%d %H:%M}"
-            modificado = True
-            log(f"[metricas] Métricas {tipo} de {pid} salvas em {csv_path}")
+                escrever_cabecalho = not os.path.exists(csv_path)
+                with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    if escrever_cabecalho:
+                        w.writerow(cabecalho)
+                    w.writerow(linha)
+
+                dados[f"metricas_{tipo}"] = f"{agora:%Y-%m-%d %H:%M}"
+                modificado = True
+                log(f"[metricas] Métricas {tipo} de {pid} salvas em {csv_path}")
+
+    elif marca == "johnata":
+        cabecalho = [
+            "post_id", "tipo", "data_post", "data_coleta",
+            "linkedin_id", "devto_views", "devto_reactions", "devto_comments"
+        ]
+
+        for pid, dados in estado.items():
+            quando_str = dados.get("linkedin_quando") or dados.get("devto_quando")
+            if not quando_str:
+                continue
+            try:
+                dt_post = datetime.strptime(quando_str, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
+            except Exception:
+                continue
+
+            idade_h = (agora - dt_post).total_seconds() / 3600
+            alvos = []
+            if idade_h >= 24 and not dados.get("metricas_24h"):
+                alvos.append("24h")
+            if idade_h >= 168 and not dados.get("metricas_7d"):
+                alvos.append("7d")
+
+            for tipo in alvos:
+                log(f"[metricas] Coletando métricas {tipo} para {pid} (Johnata)...")
+                dev_m = {}
+                if dados.get("devto_id") and str(dados["devto_id"]).isdigit():
+                    try:
+                        res = run("DEVTO_GET_ARTICLE", {"id": int(dados["devto_id"])}, DEVTO_ACCOUNT)
+                        d = res.get("data", {})
+                        dev_m["views"] = d.get("page_views_count", "")
+                        dev_m["reactions"] = d.get("positive_reactions_count", 0)
+                        dev_m["comments"] = d.get("comments_count", 0)
+                    except Exception as e:
+                        log(f"[metricas] erro dev.to {pid}: {e}")
+
+                linha = [
+                    pid, tipo, quando_str, f"{agora:%Y-%m-%d %H:%M}",
+                    dados.get("linkedin_id", ""),
+                    dev_m.get("views", ""), dev_m.get("reactions", ""), dev_m.get("comments", "")
+                ]
+
+                escrever_cabecalho = not os.path.exists(csv_path)
+                with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    if escrever_cabecalho:
+                        w.writerow(cabecalho)
+                    w.writerow(linha)
+
+                dados[f"metricas_{tipo}"] = f"{agora:%Y-%m-%d %H:%M}"
+                modificado = True
+                log(f"[metricas] Métricas {tipo} de {pid} salvas em {csv_path}")
 
     if modificado:
         salvar_estado(estado)
-        if DRIVE_WORKSPACE:
+        if DRIVE_WORKSPACE and os.path.exists(csv_path):
             DRIVE_WORKSPACE.sync_metrics(Path(csv_path))
 
 
-def executar_fila(caminho_fila_csv=None, seco=False):
-    """Lê a fila de posts e publica os itens vencidos."""
+def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
+    """Lê a fila de posts de uma marca e publica os itens aprovados e vencidos."""
+    cfg = MARCAS[marca_id]
+    log(f"=== Processando Marca: {cfg['nome']} ===")
+
+    # Trava de site no ar por marca
+    site_ok, motivo_site = conferir_site_no_ar(cfg["site_url"])
+    if not site_ok:
+        msg = f"[{marca_id}] Trava 'site no ar': {cfg['site_url']} indisponível ({motivo_site}). Rodada adiada."
+        log(msg)
+        if seco:
+            # Simulação não grava estado, LOG.md nem abre issue: o contador da janela é da rodada real.
+            log(f"[{marca_id}] (simulação) falha da janela não registrada")
+            return 0
+        log_repo(f"[{marca_id}] Rodada adiada: {motivo_site}", status="⏸️ Adiada")
+        registrar_falha_janela(marca_id, f"Site fora do ar: {motivo_site}")
+        return 0  # Requisito EARS 2: terminar sem erro
+
     filas = []
     if caminho_fila_csv:
         filas.append(caminho_fila_csv)
     else:
-        # Busca todas as fila.csv ativas em DRIVE_BASE
         filas = sorted(glob.glob(os.path.join(DRIVE_BASE, "*/fila.csv")))
 
     if not filas:
-        # Pasta do Drive ilegível (permissão do macOS para o python do launchd) não pode passar por "fila vazia".
         try:
-            os.listdir(DRIVE_BASE)
+            if os.path.exists(DRIVE_BASE):
+                os.listdir(DRIVE_BASE)
         except OSError as e:
-            log(f"ERRO: sem acesso à pasta da fila no Drive ({e.__class__.__name__}: {e}). "
-                "No launchd, dê Acesso Total ao Disco a /usr/bin/python3 (Ajustes > Privacidade e Segurança).")
+            log(f"ERRO: sem acesso à pasta da fila no Drive ({e.__class__.__name__}: {e}).")
             return 2
-        log("Nenhum arquivo fila.csv encontrado.")
+        log(f"[{marca_id}] Nenhum arquivo fila.csv encontrado em {DRIVE_BASE}.")
         return 0
 
     conferir_travas_gerais(seco=seco)
     estado = carregar_estado()
     agora = agora_brt()
 
-    # Confere horário do último post publicado pela máquina para respeitar intervalo >= 2h
+    # Confere horário do último post publicado por esta marca (intervalo mínimo 2h)
     ultimo_ts = None
     for dados in estado.values():
-        if dados.get("ig_quando") and dados.get("ig_origem") == "api":
+        quando_item = dados.get("ig_quando") if marca_id == "mishyo" else (dados.get("linkedin_quando") or dados.get("devto_quando"))
+        if quando_item and dados.get(f"{'ig' if marca_id == 'mishyo' else 'linkedin'}_origem", "api") == "api":
             try:
-                dt = datetime.strptime(dados["ig_quando"], "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
+                dt = datetime.strptime(quando_item, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
                 if ultimo_ts is None or dt > ultimo_ts:
                     ultimo_ts = dt
             except Exception:
@@ -668,7 +964,7 @@ def executar_fila(caminho_fila_csv=None, seco=False):
 
     for fpath in filas:
         pasta_semana = os.path.dirname(fpath)
-        log(f"Processando fila: {fpath}")
+        log(f"[{marca_id}] Processando fila: {fpath}")
 
         with open(fpath, encoding="utf-8") as f:
             reader = csv.DictReader(f)
@@ -681,8 +977,22 @@ def executar_fila(caminho_fila_csv=None, seco=False):
                     log(f"[{pid}] status pausado, pulando")
                     continue
 
-                if status in ("publicado", "concluido") and estado.get(pid, {}).get("ig_id"):
-                    continue
+                # EARS 3: Para Johnata, apenas item aprovado pode sair. Rascunho nunca!
+                if marca_id == "johnata":
+                    if status != "aprovado":
+                        log(f"[{pid}] Johnata: status '{status}' != 'aprovado', pulando (rascunho nunca publica)")
+                        continue
+                else:
+                    if status not in ("aprovado", "agendado"):
+                        log(f"[{pid}] Mishyo: status '{status}' não aprovado/agendado, pulando")
+                        continue
+
+                # Se já publicado
+                if status in ("publicado", "concluido"):
+                    if marca_id == "mishyo" and estado.get(pid, {}).get("ig_id"):
+                        continue
+                    if marca_id == "johnata" and (estado.get(pid, {}).get("linkedin_id") or estado.get(pid, {}).get("devto_id")):
+                        continue
 
                 if not quando_str:
                     continue
@@ -697,8 +1007,12 @@ def executar_fila(caminho_fila_csv=None, seco=False):
                     continue  # Ainda não venceu o horário
 
                 # Se já está publicado no estado
-                if estado.get(pid, {}).get("ig_id") and estado.get(pid, {}).get("fb_id") and estado.get(pid, {}).get("th_id"):
-                    continue
+                if marca_id == "mishyo":
+                    if estado.get(pid, {}).get("ig_id") and estado.get(pid, {}).get("fb_id") and estado.get(pid, {}).get("th_id"):
+                        continue
+                elif marca_id == "johnata":
+                    if estado.get(pid, {}).get("linkedin_id") and estado.get(pid, {}).get("devto_id"):
+                        continue
 
                 # Trava de intervalo mínimo entre posts
                 if ultimo_ts:
@@ -707,40 +1021,59 @@ def executar_fila(caminho_fila_csv=None, seco=False):
                         log(f"[{pid}] Intervalo mínimo de 2h ainda não atingido ({int(delta_s / 60)} min desde o último post), aguardando")
                         return 0
 
-                # Carrega o post.json na pasta do post
                 pasta_post = os.path.join(pasta_semana, "posts", row.get("pasta", pid))
                 if not os.path.exists(pasta_post):
-                    # Procura por prefixo da pasta
                     subpastas = glob.glob(os.path.join(pasta_semana, "posts", f"*{pid}*"))
                     if subpastas:
                         pasta_post = subpastas[0]
 
                 pjson_path = os.path.join(pasta_post, "post.json")
-                if not os.path.exists(pjson_path):
-                    log(f"[{pid}] post.json não encontrado em {pasta_post}, pulando")
-                    continue
+                post_data = {}
+                if os.path.exists(pjson_path):
+                    with open(pjson_path, encoding="utf-8") as pf:
+                        post_data = json.load(pf)
+                else:
+                    # Para posts simples de Johnata ou da fila
+                    post_data = {
+                        "id": pid,
+                        "titulo": row.get("titulo") or row.get("title") or pid,
+                        "legenda": row.get("legenda") or row.get("texto") or "",
+                        "texto": row.get("texto") or row.get("legenda") or "",
+                        "tags": row.get("hashtags") or row.get("tags") or "",
+                        "canais": row.get("canais") or "",
+                        "canonical_url": row.get("canonical_url") or "",
+                    }
 
-                with open(pjson_path, encoding="utf-8") as pf:
-                    post_data = json.load(pf)
+                atrasado = (agora - dt_quando).total_seconds() > ATRASO_MAXIMO_S
+                antes = dict(carregar_estado().get(pid, {}))
+                if marca_id == "johnata":
+                    if atrasado:
+                        log(f"[{pid}] Johnata: atrasado demais para sair sozinho; fica para o Johnata decidir")
+                        continue
+                    rc = publicar_item_johnata(post_data, pasta_post, canais_solicitados=row.get("canais"), seco=seco)
+                else:
+                    rc = publicar_item(post_data, pasta_post, seco=seco, so_reconciliar=atrasado)
 
-                rc = publicar_item(post_data, pasta_post, seco=seco)
+                if rc == 3:
+                    continue  # atrasado e fora do ar: não publica conteúdo fora de hora
+
                 if rc == 0 and not seco:
                     if DRIVE_WORKSPACE:
-                        # A fila é baixada de novo dentro de mark_published para não apagar
-                        # uma edição humana feita entre a leitura e a publicação.
                         DRIVE_WORKSPACE.mark_published(Path(fpath), pid)
+                    if marca_id == "mishyo" and not houve_post_novo(antes, carregar_estado().get(pid, {})):
+                        # Só reconheceu um post que já estava no ar: não conta para o intervalo nem encerra a rodada.
+                        log(f"[{pid}] reconciliado (já estava no ar); seguindo a fila")
+                        continue
                     ultimo_ts = agora_brt()
-                    # Só publica 1 item por ciclo de execução
                     break
                 elif rc != 0 and not seco:
+                    registrar_falha_janela(marca_id, f"Falha na publicação de {pid}")
                     raise RuntimeError(f"Publicação de {pid} terminou com falhas")
 
-        # Simulação não pode alterar métricas, estado ou arquivos da fila.
         if not seco:
-            coletar_metricas(pasta_semana)
+            coletar_metricas(marca=marca_id, pasta_semana=pasta_semana)
 
-    # Roda conferente de canais
-    if not seco:
+    if marca_id == "mishyo" and not seco:
         conferente_de_canais()
 
     return 0
@@ -754,52 +1087,70 @@ def main():
     fonte = fonte_arg.split("=", 1)[1].strip().lower()
     if fonte not in ("drive", "pasta"):
         raise RuntimeError("fonte inválida; use --fonte=drive ou --fonte=pasta")
+
+    marca_arg = next((a for a in sys.argv[1:] if a.startswith("--marca=")), None)
+    if marca_arg:
+        marca_escolhida = marca_arg.split("=", 1)[1].strip().lower()
+        if marca_escolhida not in MARCAS:
+            raise RuntimeError(f"marca inválida: {marca_escolhida}; use mishyo ou johnata")
+        marcas_para_rodar = [marca_escolhida]
+    else:
+        marcas_para_rodar = ["mishyo", "johnata"]
+
     caminho = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
 
-    if fonte == "drive":
-        DRIVE_WORKSPACE = DriveWorkspace(run, DRIVE_ACCOUNT)
-        try:
-            DRIVE_WORKSPACE.prepare(item_vencido_para_espelho)
-        except Exception as exc:
-            # Nunca disfarçar falha de credencial/rede como fila vazia.
-            raise RuntimeError(f"Modo Drive indisponível: {exc}") from exc
-        DRIVE_BASE = str(DRIVE_WORKSPACE.local_queue_dir)
-        BASE = str(DRIVE_WORKSPACE.temp_dir / "runtime")
-        STATE = str(DRIVE_WORKSPACE.local_state_path)
-        LOGF = os.path.join(BASE, "publicador.log")
-
-    # Uma execução por vez: rodada manual e launchd ao mesmo tempo poderiam publicar o mesmo post duas vezes.
-    if not seco:
-        import fcntl
-        os.makedirs(BASE, exist_ok=True)
-        trava = open(os.path.join(BASE, "publicador.lock"), "w")
-        try:
-            fcntl.flock(trava, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            log("Outra execução do publicador está em andamento; esta rodada foi pulada.")
-            return 0
-
-    try:
-        if "--conferente-so" in sys.argv:
-            conferente_de_canais()
-            return 0
-
-        if "--metricas-so" in sys.argv:
-            coletar_metricas()
-            return 0
-
-        return executar_fila(caminho, seco=seco)
-    except Exception as exc:
-        if DRIVE_WORKSPACE and not seco:
+    for marca_id in marcas_para_rodar:
+        cfg = MARCAS[marca_id]
+        if fonte == "drive":
+            DRIVE_WORKSPACE = DriveWorkspace(run, DRIVE_ACCOUNT, root_folder_name=cfg["root_folder"], queue_folder_name="fila")
             try:
-                DRIVE_WORKSPACE.record_failure(str(exc))
-            except Exception as state_exc:
-                log(f"ERRO adicional: não foi possível gravar motivo no estado do Drive ({state_exc})")
-        raise
-    finally:
-        if DRIVE_WORKSPACE:
-            DRIVE_WORKSPACE.close()
-            DRIVE_WORKSPACE = None
+                DRIVE_WORKSPACE.prepare(item_vencido_para_espelho)
+            except Exception as exc:
+                raise RuntimeError(f"Modo Drive indisponível para {marca_id}: {exc}") from exc
+            DRIVE_BASE = str(DRIVE_WORKSPACE.local_queue_dir)
+            BASE = str(DRIVE_WORKSPACE.temp_dir / "runtime")
+            STATE = str(DRIVE_WORKSPACE.local_state_path)
+            LOGF = os.path.join(BASE, "publicador.log")
+        else:
+            DRIVE_BASE = cfg["drive_base"]
+            BASE = os.path.expanduser(f"~/.mishyo_logs/maquina_{marca_id}")
+            STATE = os.path.join(BASE, "estado.json")
+            LOGF = os.path.join(BASE, "publicador.log")
+
+        if not seco:
+            import fcntl
+            os.makedirs(BASE, exist_ok=True)
+            trava = open(os.path.join(BASE, f"publicador_{marca_id}.lock"), "w")
+            try:
+                fcntl.flock(trava, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                log(f"[{marca_id}] Outra execução em andamento; rodada pulada.")
+                continue
+
+        try:
+            if "--conferente-so" in sys.argv:
+                if marca_id == "mishyo":
+                    conferente_de_canais()
+                continue
+
+            if "--metricas-so" in sys.argv:
+                coletar_metricas(marca=marca_id)
+                continue
+
+            executar_fila_marca(marca_id=marca_id, caminho_fila_csv=caminho, seco=seco)
+        except Exception as exc:
+            if DRIVE_WORKSPACE and not seco:
+                try:
+                    DRIVE_WORKSPACE.record_failure(str(exc))
+                except Exception as state_exc:
+                    log(f"ERRO adicional: não foi possível gravar motivo no estado do Drive ({state_exc})")
+            raise
+        finally:
+            if DRIVE_WORKSPACE:
+                DRIVE_WORKSPACE.close()
+                DRIVE_WORKSPACE = None
+
+    return 0
 
 
 if __name__ == "__main__":
