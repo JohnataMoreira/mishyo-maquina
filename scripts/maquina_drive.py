@@ -53,9 +53,17 @@ class DriveFile:
 class DriveWorkspace:
     """Espelho mínimo de uma rodada e operações de escrita idempotentes no Drive."""
 
-    def __init__(self, execute: Callable[..., dict[str, Any]], account: str):
+    def __init__(
+        self,
+        execute: Callable[..., dict[str, Any]],
+        account: str,
+        root_folder_name: str = ROOT_FOLDER_NAME,
+        queue_folder_name: str = QUEUE_FOLDER_NAME,
+    ):
         self.execute = execute
         self.account = account
+        self.root_folder_name = root_folder_name
+        self.queue_folder_name = queue_folder_name
         self.temp_dir = Path(tempfile.mkdtemp(prefix="mishyo-maquina-drive-"))
         self.root: DriveFile | None = None
         self.queue: DriveFile | None = None
@@ -147,8 +155,8 @@ class DriveWorkspace:
         As mídias só são baixadas quando o item vence, para uma rodada não transferir a
         semana inteira nem tocar no conteúdo de posts futuros.
         """
-        self.root = self._one_folder(ROOT_FOLDER_NAME)
-        self.queue = self._one_folder(QUEUE_FOLDER_NAME, self.root.id)
+        self.root = self._one_folder(self.root_folder_name)
+        self.queue = self._one_folder(self.queue_folder_name, self.root.id)
         self.local_queue_dir.mkdir(parents=True, exist_ok=True)
 
         state = self._one_file(self.root.id, STATE_FILE_NAME)
@@ -175,15 +183,18 @@ class DriveWorkspace:
                 post_dir_name = (row.get("pasta") or row.get("id") or "").strip()
                 if not post_dir_name:
                     continue
-                remote_posts = self._one_folder("posts", week.id)
-                post_folder = self._one_folder(post_dir_name, remote_posts.id)
-                local_post = local_week / "posts" / post_folder.name
-                post_json = self._one_file(post_folder.id, "post.json")
-                if not post_json:
-                    raise DriveError(f"post.json ausente na pasta Drive {post_folder.name!r}")
-                local_post_json = local_post / "post.json"
-                self._download_to(post_json, local_post_json, post_folder.id)
-                self.post_folder_by_local_path[local_post] = post_folder
+                try:
+                    remote_posts = self._one_folder("posts", week.id)
+                    post_folder = self._one_folder(post_dir_name, remote_posts.id)
+                    local_post = local_week / "posts" / post_folder.name
+                    post_json = self._one_file(post_folder.id, "post.json")
+                    if post_json:
+                        local_post_json = local_post / "post.json"
+                        self._download_to(post_json, local_post_json, post_folder.id)
+                        self.post_folder_by_local_path[local_post] = post_folder
+                except DriveError:
+                    # Post pode ser apenas de texto sem pasta ou post.json separado no Drive
+                    pass
 
     def materialize_media(self, local_post: Path, names: list[str]) -> None:
         post_folder = self.post_folder_by_local_path.get(local_post)
@@ -242,10 +253,11 @@ class DriveWorkspace:
         self._upload(local_csv, self.parent_by_local_path[local_csv], remote_csv)
 
     def sync_metrics(self, local_metrics: Path) -> None:
+        if not self.root:
+            raise DriveError("workspace Drive não preparado")
         week = next((w for csv_path, w in self.week_by_csv_path.items() if csv_path.parent == local_metrics.parent), None)
-        if not week:
-            raise DriveError(f"métricas fora de uma semana da fila: {local_metrics}")
-        existing = self.files_by_local_path.get(local_metrics)
-        uploaded = self._upload(local_metrics, week.id, existing)
+        target_folder_id = week.id if week else self.root.id
+        existing = self.files_by_local_path.get(local_metrics) or self._one_file(target_folder_id, local_metrics.name)
+        uploaded = self._upload(local_metrics, target_folder_id, existing)
         self.files_by_local_path[local_metrics] = uploaded
-        self.parent_by_local_path[local_metrics] = week.id
+        self.parent_by_local_path[local_metrics] = target_folder_id

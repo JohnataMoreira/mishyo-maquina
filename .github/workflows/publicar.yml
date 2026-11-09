@@ -1,15 +1,28 @@
-name: Publicar Posts Mishyo
+name: Publicar Posts Multimarca (Mishyo & Johnata)
 
 on:
   schedule:
-    # 09:05 BRT (12:05 UTC)
+    # 09:05 BRT (12:05 UTC) — Mishyo manhã
     - cron: '17,37,57 12 * * *'
-    # 13:05 BRT (16:05 UTC)
+    # 12:30 BRT (15:30 UTC) — Johnata post do dia
+    - cron: '37,47,57 15 * * *'
+    # 13:05 BRT (16:05 UTC) — Mishyo tarde
     - cron: '17,37,57 16 * * *'
-    # 20:05 BRT (23:05 UTC)
+    # 17:05 BRT (20:05 UTC) — Mishyo noite (ajustado para 17h a pedido do Johnata)
     - cron: '17,37,57 20 * * *'
+    # 23:30 BRT (02:30 UTC) — Métricas diárias
+    - cron: '37,47,57 2 * * *'
   workflow_dispatch:
     inputs:
+      marca:
+        description: 'Marca a publicar (mishyo, johnata ou todas)'
+        required: false
+        type: choice
+        options:
+          - todas
+          - mishyo
+          - johnata
+        default: todas
       dry_run:
         description: 'Executar em modo simulação (--dry-run)'
         required: false
@@ -22,6 +35,7 @@ concurrency:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   publicar:
@@ -29,6 +43,7 @@ jobs:
     timeout-minutes: 30
     env:
       CI: "false"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repositório
@@ -58,12 +73,15 @@ jobs:
 
       - name: Executar Publicador
         run: |
+          ARGS="--fonte=drive"
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            echo "Modo simulação ativado (--dry-run)"
-            python3 scripts/maquina_publicador.py --fonte=drive --dry-run
-          else
-            python3 scripts/maquina_publicador.py --fonte=drive
+            ARGS="$ARGS --dry-run"
           fi
+          if [ -n "${{ github.event.inputs.marca }}" ] && [ "${{ github.event.inputs.marca }}" != "todas" ]; then
+            ARGS="$ARGS --marca=${{ github.event.inputs.marca }}"
+          fi
+          echo "Executando: python3 scripts/maquina_publicador.py $ARGS"
+          python3 scripts/maquina_publicador.py $ARGS
 
       - name: Registrar histórico no repositório
         if: success()
