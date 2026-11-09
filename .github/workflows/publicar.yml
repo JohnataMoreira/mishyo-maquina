@@ -7,7 +7,7 @@ on:
     # 13:05 BRT (16:05 UTC)
     - cron: '17,37,57 16 * * *'
     # 20:05 BRT (23:05 UTC)
-    - cron: '17,37,57 23 * * *'
+    - cron: '17,37,57 20 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
