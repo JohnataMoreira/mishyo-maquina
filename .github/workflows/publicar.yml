@@ -64,8 +64,9 @@ jobs:
         env:
           COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
         run: |
-          composio login --user-api-key "$COMPOSIO_API_KEY" -y --no-skill-install
-          composio whoami
+          # Saída silenciada: o repositório é público e o login e o whoami mostram e-mail e org da conta.
+          composio login --user-api-key "$COMPOSIO_API_KEY" -y --no-skill-install > /dev/null
+          composio whoami > /dev/null && echo "Composio autenticado"
 
       - name: Executar testes unitários
         run: |
