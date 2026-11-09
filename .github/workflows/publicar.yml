@@ -2,15 +2,15 @@ name: Publicar Posts Multimarca (Mishyo & Johnata)
 
 on:
   schedule:
-    # 09:05 BRT (12:05 UTC) — Mishyo manhã
+    # Mishyo manhã: 9h BRT, tentativas 09:17, 09:37 e 09:57 (12:xx UTC)
     - cron: '17,37,57 12 * * *'
-    # 12:30 BRT (15:30 UTC) — Johnata post do dia
+    # Johnata: 12h30 BRT, tentativas 12:37, 12:47 e 12:57 (15:xx UTC)
     - cron: '37,47,57 15 * * *'
-    # 13:05 BRT (16:05 UTC) — Mishyo tarde
+    # Mishyo tarde: 13h BRT, tentativas 13:17, 13:37 e 13:57 (16:xx UTC)
     - cron: '17,37,57 16 * * *'
-    # 17:05 BRT (20:05 UTC) — Mishyo noite (ajustado para 17h a pedido do Johnata)
+    # Mishyo noite: 17h BRT, tentativas 17:17, 17:37 e 17:57 (20:xx UTC)
     - cron: '17,37,57 20 * * *'
-    # 23:30 BRT (02:30 UTC) — Métricas diárias
+    # Métricas: 23h30 BRT, tentativas 23:37, 23:47 e 23:57 (02:xx UTC)
     - cron: '37,47,57 2 * * *'
   workflow_dispatch:
     inputs:

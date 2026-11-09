@@ -83,6 +83,18 @@ class TestMaquinaMultimarca(unittest.TestCase):
             content = Path(mp.REPO_LOG).read_text(encoding="utf-8")
             self.assertIn("⏸️ Adiada", content)
 
+    def test_simulacao_com_site_fora_nao_tem_efeito_colateral(self):
+        """Dry-run com site fora: sem estado, sem LOG.md e sem issue (o contador da janela é da rodada real)."""
+        with patch("maquina_publicador.conferir_site_no_ar", return_value=(False, "HTTP 503")), \
+             patch("maquina_publicador.registrar_falha_janela") as falha, \
+             patch("maquina_publicador.disparar_aviso_falha") as aviso:
+            rc = mp.executar_fila_marca("johnata", seco=True)
+            self.assertEqual(rc, 0)
+            falha.assert_not_called()
+            aviso.assert_not_called()
+            self.assertFalse(os.path.exists(mp.REPO_LOG))
+            self.assertFalse(os.path.exists(mp.STATE))
+
     def test_johnata_rascunho_nunca_sai_apenas_aprovado(self):
         """EARS 3: Um item aprovado da fila do Johnata deve sair nos canais; um rascunho, nunca."""
         fila_dir = os.path.join(self.temp_dir, "fila_johnata")
@@ -159,3 +171,4 @@ class TestMaquinaMultimarca(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

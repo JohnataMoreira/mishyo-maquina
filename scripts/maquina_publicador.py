@@ -905,6 +905,10 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
     if not site_ok:
         msg = f"[{marca_id}] Trava 'site no ar': {cfg['site_url']} indisponível ({motivo_site}). Rodada adiada."
         log(msg)
+        if seco:
+            # Simulação não grava estado, LOG.md nem abre issue: o contador da janela é da rodada real.
+            log(f"[{marca_id}] (simulação) falha da janela não registrada")
+            return 0
         log_repo(f"[{marca_id}] Rodada adiada: {motivo_site}", status="⏸️ Adiada")
         registrar_falha_janela(marca_id, f"Site fora do ar: {motivo_site}")
         return 0  # Requisito EARS 2: terminar sem erro
