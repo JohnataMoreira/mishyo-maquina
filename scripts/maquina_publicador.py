@@ -85,7 +85,10 @@ def run(tool, data, account=None):
     cmd = [C, "execute", tool, "-d", json.dumps(data, ensure_ascii=False)]
     if account:
         cmd += ["--account", account]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    # O Composio CLI detecta CI=true (padrão no GitHub Actions) e mascara IDs como <REDACTED>.
+    # Forçar CI="false" garante execução limpa e sem dados corrompidos.
+    env = dict(os.environ, CI="false")
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
     out = ANSI.sub("", res.stdout)
     i = out.find("{")
     if i < 0:

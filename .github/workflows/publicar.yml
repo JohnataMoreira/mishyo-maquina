@@ -27,6 +27,8 @@ jobs:
   publicar:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CI: "false"
 
     steps:
       - name: Checkout repositório

@@ -77,7 +77,6 @@ class DriveWorkspace:
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _call(self, tool: str, payload: dict[str, Any]) -> dict[str, Any]:
-        print(f"[DriveAPI] {tool} payload={payload}", flush=True)
         try:
             return self.execute(tool, payload, self.account)
         except Exception as exc:  # mantém contexto, mas não deixa falha parecer fila vazia
@@ -92,7 +91,6 @@ class DriveWorkspace:
             where = f" dentro de {parent_id}" if parent_id else ""
             raise DriveError(f"pasta Drive ambígua ou ausente: {name!r}{where} ({len(found)} resultados)")
         item = found[0]
-        print(f"[DriveFolder] {name!r} -> id={item.get('id')}", flush=True)
         return DriveFile(str(item["id"]), str(item["name"]), str(item.get("mimeType", "")))
 
     def _children(self, parent_id: str, query: str) -> list[DriveFile]:
