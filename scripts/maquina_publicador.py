@@ -31,6 +31,7 @@ DRIVE_ACCOUNT = "googledrive_gleg-darken"
 LINKEDIN_ACCOUNT = "linkedin_cheki-suburb"
 LINKEDIN_AUTHOR_URN = "urn:li:person:OMoz1tzc7G"
 DEVTO_ACCOUNT = "devto_looby-amor"
+REDDIT_ACCOUNT = "reddit_recork-gaz"  # u/JohnataMoreira — ACTIVE
 
 IG_USER_ID = "29586430714275170"
 FB_PAGE_ID = "1058406010693067"
@@ -51,7 +52,7 @@ MARCAS = {
         "root_folder": "Johnata · Conteúdo",
         "site_url": "https://johnatamoreira.com.br",
         "status_validos": {"aprovado"},
-        "canais_padrao": ["linkedin", "devto"],
+        "canais_padrao": ["linkedin", "devto", "reddit"],
         "drive_base": os.path.expanduser(
             "~/Library/CloudStorage/GoogleDrive-johvsm@gmail.com/Meu Drive/Johnata · Conteúdo/fila"
         ),
@@ -70,6 +71,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 ESPERA_ESPELHO_S = 90
 INTERVALO_MINIMO_S = 2 * 3600  # No mínimo 2 horas entre posts publicados
 ATRASO_MAXIMO_S = 2 * 3600  # Item vencido há mais de 2h não sai sozinho: só reconcilia o que já está no ar
+AUTO_EXPIRAR_S = 24 * 3600  # Item vencido há mais de 24h sem publicar → expira automaticamente na fila
 
 
 def houve_post_novo(antes: dict, depois: dict) -> bool:
@@ -78,6 +80,55 @@ def houve_post_novo(antes: dict, depois: dict) -> bool:
         depois.get(f"{c}_origem") == "api" and antes.get(f"{c}_id") != depois.get(f"{c}_id")
         for c in ("ig", "fb", "th")
     )
+
+
+def expirar_itens_atrasados(fpath: str, marca_id: str, agora) -> int:
+    """Varre o CSV e marca como 'expirado' qualquer item que ainda esteja como agendado/aprovado
+    mas já venceu há mais de AUTO_EXPIRAR_S sem ter sido publicado. Retorna o nº de itens expirados.
+    Nunca apaga conteúdo; apenas muda o status para que a fila não trave o dia seguinte."""
+    try:
+        with open(fpath, encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+        if not rows:
+            return 0
+        fieldnames = list(rows[0].keys())
+        expirados = 0
+        for row in rows:
+            status = row.get("status", "").strip().lower()
+            if status not in ("agendado", "aprovado"):
+                continue
+            quando_str = row.get("quando", "").strip()
+            if not quando_str:
+                continue
+            try:
+                dt_quando = datetime.strptime(quando_str, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
+            except ValueError:
+                continue
+            atraso_s = (agora - dt_quando).total_seconds()
+            if atraso_s > AUTO_EXPIRAR_S:
+                pid = row.get("id", "?").strip()
+                row["status"] = "expirado"
+                expirados += 1
+                log(f"[{pid}] auto-expirado: estava agendado para {quando_str} ({int(atraso_s/3600):.0f}h atrás)")
+        if expirados:
+            with open(fpath, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+            # Sobe CSV atualizado ao Drive
+            if DRIVE_WORKSPACE:
+                try:
+                    p = Path(fpath)
+                    remote = DRIVE_WORKSPACE.files_by_local_path.get(p)
+                    parent = DRIVE_WORKSPACE.parent_by_local_path.get(p)
+                    if remote and parent:
+                        DRIVE_WORKSPACE._upload(p, parent, remote)
+                except Exception as e:
+                    log(f"aviso: falha ao sincronizar CSV com Drive após auto-expirar ({e})")
+        return expirados
+    except Exception as e:
+        log(f"aviso: expirar_itens_atrasados falhou ({e})")
+        return 0
 
 
 def agora_brt():
@@ -540,7 +591,10 @@ def publicar_item_johnata(post, pasta_post, canais_solicitados=None, seco=False)
     canais_auto = []
     for c in canais:
         if c == "reddit-manual":
-            log(f"[{pid}] [reddit-manual] Canal manual: rascunho fica na fila para postagem manual pelo Johnata.")
+            # Renomeado para "reddit" a partir de nov/2026; aceita ambos
+            canais_auto.append("reddit")
+        elif c == "reddit":
+            canais_auto.append("reddit")
         elif c == "site":
             log(f"[{pid}] [site] Publicação no blog aguarda conclusão da SITE-007.")
         elif c in ("facebook", "facebook-pessoal"):
@@ -611,6 +665,39 @@ def publicar_item_johnata(post, pasta_post, canais_solicitados=None, seco=False)
         except Exception as exc:
             falhas.append(f"devto: {exc}")
             log(f"[{pid}] FALHA no dev.to: {exc}")
+
+    # 3. Reddit (u/JohnataMoreira)
+    if "reddit" in canais_auto and not st.get("reddit_id"):
+        try:
+            titulo = post.get("titulo") or post.get("title") or pid
+            if len(titulo) > 300:
+                titulo = titulo[:297] + "..."
+            subreddit = post.get("reddit_subreddit") or "u_JohnataMoreira"
+            # Se tem URL canônica e é artigo, publica como link; senão como texto
+            canonical = post.get("canonical_url") or ""
+            devto_url_r = st.get("devto_url") or ""
+            url_destino = devto_url_r or canonical
+            if url_destino:
+                payload = {"subreddit": subreddit, "title": titulo, "kind": "link", "url": url_destino}
+            else:
+                corpo = post.get("body_markdown") or post.get("legenda") or post.get("texto") or ""
+                if len(corpo) > 40000:
+                    corpo = corpo[:39997] + "..."
+                payload = {"subreddit": subreddit, "title": titulo, "kind": "self", "text": corpo}
+            res = run("REDDIT_CREATE_REDDIT_POST", payload, REDDIT_ACCOUNT)
+            data = res.get("data", {})
+            reddit_id = data.get("id") or data.get("name") or "publicado"
+            reddit_url = data.get("url") or data.get("permalink") or ""
+            if reddit_url and not reddit_url.startswith("http"):
+                reddit_url = f"https://www.reddit.com{reddit_url}"
+            st.update(reddit_id=reddit_id, reddit_url=reddit_url,
+                      reddit_quando=f"{agora_brt():%Y-%m-%d %H:%M}", reddit_origem="api",
+                      reddit_subreddit=subreddit)
+            salvar_estado(estado)
+            log(f"[{pid}] Reddit publicado ({reddit_id}): {reddit_url}")
+        except Exception as exc:
+            falhas.append(f"reddit: {exc}")
+            log(f"[{pid}] FALHA no Reddit: {exc}")
 
     salvar_estado(estado)
     if falhas:
@@ -965,6 +1052,11 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
     for fpath in filas:
         pasta_semana = os.path.dirname(fpath)
         log(f"[{marca_id}] Processando fila: {fpath}")
+
+        # Auto-expirar itens atrasados há mais de 24h para não travar a fila
+        n_expirados = expirar_itens_atrasados(fpath, marca_id, agora)
+        if n_expirados:
+            log(f"[{marca_id}] {n_expirados} item(ns) auto-expirado(s) em {fpath}")
 
         with open(fpath, encoding="utf-8") as f:
             reader = csv.DictReader(f)
