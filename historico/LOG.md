@@ -16,3 +16,5 @@
 | 2026-11-12 | MAQUINA | 2026-11-12-09h-avos-se-conheceram publicado nos 3 canais: IG 18136880023676477 (api), FB 1058406010693067_122135947508810781 (api), TH 18099534620440926 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-12 | MAQUINA | 2026-11-12-especificar-antes-de-codar publicado (Johnata): linkedin | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-12 | MAQUINA | 2026-11-12-especificar-antes-de-codar publicado (Johnata): linkedin | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
+| 2026-11-12 | MAQUINA | 2026-11-12-20h-detalhes-lembranca-c3 publicado nos 3 canais: IG 18109742345220043 (api), FB 1058406010693067_122135982500810781 (api), TH 18022628525948110 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
+| 2026-11-12 | MAQUINA | 2026-11-12-20h-detalhes-lembranca-c3 publicado nos 3 canais: IG 18109742345220043 (api), FB 1058406010693067_122135982500810781 (api), TH 18022628525948110 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
