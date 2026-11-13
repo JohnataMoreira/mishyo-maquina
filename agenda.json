@@ -62,21 +62,16 @@
    "nao_antes_de": null
   },
   "viceradar": {
-   "pendentes": [
-    {
-     "id": "2026-11-13-1856-analise-caixa",
-     "quando": "2026-11-13 18:56"
-    }
-   ],
+   "pendentes": [],
    "nao_antes_de": null
   }
  },
- "ultima_rodada_completa": "2026-11-13 17:49",
+ "ultima_rodada_completa": "2026-11-13 19:05",
  "chamadas_composio": {
   "mes": "2026-11",
-  "total_mes": 648,
+  "total_mes": 707,
   "dia": "2026-11-13",
-  "total_dia": 619
+  "total_dia": 678
  },
  "ultimo_alerta_falha": "2026-11-13 14:20"
 }
