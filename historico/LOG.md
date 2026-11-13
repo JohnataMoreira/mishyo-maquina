@@ -25,3 +25,4 @@
 | 2026-11-13 | MAQUINA | 2026-11-13-13h-produto-privacidade-familia publicado nos 3 canais: IG 17875683135639285 (api), FB 1058406010693067_122136077636810781 (api), TH 18023426270730009 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-13 | MAQUINA | 2026-11-13-1206-alerta-golpe-pc publicado nos 3 canais: IG 18074689271772492 (api), FB 1432965466563263_122109921411535095 (api), TH 17881981812631709 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-13 | MAQUINA | 2026-11-13-1414-edicoes-carrossel publicado nos 3 canais: IG 18021104684744967 (api), FB 1432965466563263_122109956169535095 (api), TH 18117759878601701 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
+| 2026-11-13 | MAQUINA | 2026-11-13-1531-musica-festival publicado nos 3 canais: IG 18018129437750715 (api), FB 1432965466563263_122109985311535095 (api), TH 17882918898546994 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
