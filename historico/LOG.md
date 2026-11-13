@@ -22,3 +22,4 @@
 | 2026-11-13 | MAQUINA | 2026-11-13-09h-grave-voz publicado nos 3 canais: IG 18099602657121190 (api), FB 1058406010693067_122136057674810781 (api), TH 17984880387122103 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-13 | MAQUINA | 2026-11-13-0846-guia-preload publicado nos 3 canais: IG 17981838042128315 (api), FB 1432965466563263_122109884655535095 (api), TH 18135840769740634 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-13 | MAQUINA | 2026-11-13-1058-plataformas publicado nos 3 canais: IG 17996717480847402 (api), FB 1432965466563263_122109901893535095 (api), TH 18112247810155517 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
+| 2026-11-13 | MAQUINA | 2026-11-13-13h-produto-privacidade-familia publicado nos 3 canais: IG 17875683135639285 (api), FB 1058406010693067_122136077636810781 (api), TH 18023426270730009 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
