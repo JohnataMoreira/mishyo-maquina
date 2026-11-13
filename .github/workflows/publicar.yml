@@ -49,7 +49,7 @@ jobs:
       MARCA: ${{ github.event.inputs.marca }}
       DRY_RUN: ${{ github.event.inputs.dry_run }}
       FORCAR: ${{ github.event.inputs.forcar }}
-      MAQUINA_AGENDA_DIR: ${{ runner.temp }}/agenda
+      MAQUINA_AGENDA_DIR: /tmp/maquina-agenda
 
     steps:
       - name: Checkout repositório
