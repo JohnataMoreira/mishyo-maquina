@@ -19,3 +19,4 @@
 | 2026-11-12 | MAQUINA | 2026-11-12-20h-detalhes-lembranca-c3 publicado nos 3 canais: IG 18109742345220043 (api), FB 1058406010693067_122135982500810781 (api), TH 18022628525948110 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-12 | MAQUINA | 2026-11-12-20h-detalhes-lembranca-c3 publicado nos 3 canais: IG 18109742345220043 (api), FB 1058406010693067_122135982500810781 (api), TH 18022628525948110 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-13 | MAQUINA | 2026-11-13-0721-contagem-6-dias publicado nos 3 canais: IG 17924023185446772 (api), FB 1432965466563263_122109810153535095 (api), TH 17898935598416102 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
+| 2026-11-13 | MAQUINA | 2026-11-13-09h-grave-voz publicado nos 3 canais: IG 18099602657121190 (api), FB 1058406010693067_122136057674810781 (api), TH 17984880387122103 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
