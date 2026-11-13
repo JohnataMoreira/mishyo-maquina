@@ -31,10 +31,6 @@
      "quando": "2026-11-19 12:01"
     },
     {
-     "id": "2026-11-13-13h-produto-privacidade-familia",
-     "quando": "2026-11-13 12:20"
-    },
-    {
      "id": "2026-11-13-20h-voz-de-quem-ama-c2",
      "quando": "2026-11-13 17:08"
     },
@@ -92,15 +88,15 @@
      "quando": "2026-11-13 18:56"
     }
    ],
-   "nao_antes_de": null
+   "nao_antes_de": "2026-11-13 12:41"
   }
  },
- "ultima_rodada_completa": "2026-11-13 11:19",
+ "ultima_rodada_completa": "2026-11-13 12:25",
  "chamadas_composio": {
   "mes": "2026-11",
-  "total_mes": 278,
+  "total_mes": 334,
   "dia": "2026-11-13",
-  "total_dia": 249
+  "total_dia": 305
  },
  "ultimo_alerta_falha": "2026-11-13 12:18"
 }
