@@ -2,6 +2,11 @@
 
 Repositório PÚBLICO: só código e histórico de publicação. Estratégia, decisões e pendências moram em `QG/docs/MAQUINA_DE_POSTS.md` (doc dono).
 
+# Atualizado: 13/11/2026 (~17h20, BRT) — Guarda de tela preta (`0746b78`)
+- `--validar` acusa erro quando um bloco grande, escuro e uniforme ocupa o miolo da arte sem encostar nas bordas (print do app que não carregou).
+- Sem Pillow instalado a conferência é pulada: reforço da validação local, nunca bloqueio da rodada.
+- Causa-raiz e correção do gerador: `QG/docs/MAQUINA_DE_POSTS.md` § 25. 34 testes.
+
 # Atualizado: 13/11/2026 (~12h35, BRT) — Resiliência e validação na aprovação (`726beff`)
 - Post fora da regra (`PostInvalido`) é pulado com alerta único no Telegram; os seguintes saem.
 - Cada marca roda isolada (`rodar_marca`); a rodada só termina vermelha depois de todas terem a vez.
