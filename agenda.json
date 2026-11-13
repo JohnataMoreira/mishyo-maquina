@@ -72,10 +72,6 @@
   "viceradar": {
    "pendentes": [
     {
-     "id": "2026-11-13-1058-plataformas",
-     "quando": "2026-11-13 11:10"
-    },
-    {
      "id": "2026-11-13-1206-alerta-golpe-pc",
      "quando": "2026-11-13 12:06"
     },
@@ -99,11 +95,11 @@
    "nao_antes_de": null
   }
  },
- "ultima_rodada_completa": "2026-11-13 10:49",
+ "ultima_rodada_completa": "2026-11-13 11:19",
  "chamadas_composio": {
   "mes": "2026-11",
-  "total_mes": 216,
+  "total_mes": 278,
   "dia": "2026-11-13",
-  "total_dia": 187
+  "total_dia": 249
  }
 }
