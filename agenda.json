@@ -68,10 +68,6 @@
   "viceradar": {
    "pendentes": [
     {
-     "id": "2026-11-13-1414-edicoes-carrossel",
-     "quando": "2026-11-13 14:14"
-    },
-    {
      "id": "2026-11-13-1531-musica-festival",
      "quando": "2026-11-13 15:31"
     },
@@ -84,15 +80,15 @@
      "quando": "2026-11-13 18:56"
     }
    ],
-   "nao_antes_de": "2026-11-13 14:43"
+   "nao_antes_de": null
   }
  },
- "ultima_rodada_completa": "2026-11-13 14:22",
+ "ultima_rodada_completa": "2026-11-13 14:47",
  "chamadas_composio": {
   "mes": "2026-11",
-  "total_mes": 409,
+  "total_mes": 464,
   "dia": "2026-11-13",
-  "total_dia": 380
+  "total_dia": 435
  },
  "ultimo_alerta_falha": "2026-11-13 14:20"
 }
