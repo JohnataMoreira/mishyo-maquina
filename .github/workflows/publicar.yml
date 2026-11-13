@@ -1,17 +1,14 @@
 name: Publicar Posts Multimarca (Mishyo & Johnata)
 
+# Gatilhos (Fase 0, 12/11/2026): o agendador do GitHub é "melhor esforço" e falhou por 2 dias.
+#  - Fluxo A: Worker da Cloudflare (worker/gatilho.js) dispara nos minutos 00 e 30.
+#  - cron-job.org dispara nos minutos 15 e 45.
+#  - O cron abaixo fica só como terceira via.
+# Cada disparo passa pela guarda (scripts/agenda.py), que decide sem gastar chamadas do Composio
+# se a rodada completa precisa acontecer. Toda rodada, completa ou não, bate no vigia (heartbeat B).
 on:
   schedule:
-    # Mishyo manhã: 9h BRT, tentativas 09:17, 09:37 e 09:57 (12:xx UTC)
-    - cron: '17,37,57 12 * * *'
-    # Johnata: 12h30 BRT, tentativas 12:37, 12:47 e 12:57 (15:xx UTC)
-    - cron: '37,47,57 15 * * *'
-    # Mishyo tarde: 13h BRT, tentativas 13:17, 13:37 e 13:57 (16:xx UTC)
-    - cron: '17,37,57 16 * * *'
-    # Mishyo noite: 17h BRT, tentativas 17:17, 17:37 e 17:57 (20:xx UTC)
-    - cron: '17,37,57 20 * * *'
-    # Métricas: 23h30 BRT, tentativas 23:37, 23:47 e 23:57 (02:xx UTC)
-    - cron: '37,47,57 2 * * *'
+    - cron: '7,37 * * * *'
   workflow_dispatch:
     inputs:
       marca:
@@ -25,6 +22,11 @@ on:
         default: todas
       dry_run:
         description: 'Executar em modo simulação (--dry-run)'
+        required: false
+        type: boolean
+        default: false
+      forcar:
+        description: 'Rodar a rodada completa agora, sem passar pela guarda'
         required: false
         type: boolean
         default: false
@@ -44,23 +46,38 @@ jobs:
     env:
       CI: "false"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MARCA: ${{ github.event.inputs.marca }}
+      DRY_RUN: ${{ github.event.inputs.dry_run }}
+      FORCAR: ${{ github.event.inputs.forcar }}
+      MAQUINA_AGENDA_DIR: ${{ runner.temp }}/agenda
 
     steps:
       - name: Checkout repositório
         uses: actions/checkout@v4
 
+      - name: Guarda (decide se a rodada completa roda)
+        id: guarda
+        run: python3 scripts/agenda.py guard
+
       - name: Configurar Python
+        if: steps.guarda.outputs.rodar == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
+      - name: Executar testes unitários
+        if: steps.guarda.outputs.rodar == 'true'
+        run: python3 -m unittest discover tests/
+
       - name: Instalar Composio CLI
+        if: steps.guarda.outputs.rodar == 'true'
         run: |
           curl -fsSL https://composio.dev/install | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           echo "$HOME/.composio" >> $GITHUB_PATH
 
       - name: Autenticar Composio
+        if: steps.guarda.outputs.rodar == 'true'
         env:
           COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
         run: |
@@ -68,29 +85,50 @@ jobs:
           composio login --user-api-key "$COMPOSIO_API_KEY" -y --no-skill-install > /dev/null
           composio whoami > /dev/null && echo "Composio autenticado"
 
-      - name: Executar testes unitários
-        run: |
-          python3 -m unittest discover tests/
-
       - name: Executar Publicador
+        if: steps.guarda.outputs.rodar == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           ARGS="--fonte=drive"
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             ARGS="$ARGS --dry-run"
           fi
-          if [ -n "${{ github.event.inputs.marca }}" ] && [ "${{ github.event.inputs.marca }}" != "todas" ]; then
-            ARGS="$ARGS --marca=${{ github.event.inputs.marca }}"
+          if [ -n "$MARCA" ] && [ "$MARCA" != "todas" ]; then
+            ARGS="$ARGS --marca=$MARCA"
           fi
           echo "Executando: python3 scripts/maquina_publicador.py $ARGS"
           python3 scripts/maquina_publicador.py $ARGS
 
+      - name: Gravar agenda (horários pendentes para a guarda)
+        if: steps.guarda.outputs.rodar == 'true' && github.event.inputs.dry_run != 'true'
+        run: python3 scripts/agenda.py gravar
+
       - name: Registrar histórico no repositório
-        if: success()
+        if: steps.guarda.outputs.rodar == 'true'
         run: |
           if [ -n "$(git status --porcelain historico/LOG.md)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add historico/LOG.md
             git commit -m "log(maquina): registrar publicacao no historico [skip ci]"
+            git pull --rebase -q
             git push
           fi
+
+      - name: Vigia — batimento do fluxo B
+        if: success()
+        env:
+          HEARTBEAT_B_URL: ${{ secrets.HEARTBEAT_B_URL }}
+        run: curl -fsS -m 20 -o /dev/null "$HEARTBEAT_B_URL" && echo "batimento enviado"
+
+      - name: Falha — avisa o vigia e o Telegram
+        if: failure()
+        env:
+          HEARTBEAT_B_URL: ${{ secrets.HEARTBEAT_B_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -fsS -m 20 -o /dev/null "$HEARTBEAT_B_URL/fail" || true
+          python3 scripts/agenda.py falha || true

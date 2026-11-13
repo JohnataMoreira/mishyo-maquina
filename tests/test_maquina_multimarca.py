@@ -18,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from maquina_drive import DriveFile, DriveWorkspace
 import maquina_publicador as mp
 
+# Os testes não dependem da hora em que rodam: o corte noturno (22:30) é testado à parte.
+mp.CORTE_NOTURNO = (24, 0)
+
 
 class TestMaquinaMultimarca(unittest.TestCase):
     def setUp(self):
@@ -230,6 +233,31 @@ class TestFilaReconciliacaoEAtraso(unittest.TestCase):
 
         self.assertEqual(self._rodar(csv_file, fake), 0)
         self.assertEqual(chamadas, [("atrasado-5h", True), ("hoje", False)])
+
+    def test_corte_noturno_nao_publica_item_novo(self):
+        csv_file = self._fila([("hoje", 30)])
+        chamadas = []
+
+        def fake(post, pasta, seco=False, so_reconciliar=False):
+            chamadas.append(post["id"])
+            return 0
+
+        with patch.object(mp, "CORTE_NOTURNO", (0, 0)):
+            self.assertEqual(self._rodar(csv_file, fake), 0)
+        self.assertEqual(chamadas, [])
+
+    def test_pendentes_gravados_para_a_guarda(self):
+        csv_file = self._fila([("hoje", 30)])
+        destino = os.path.join(self.temp_dir, "agenda")
+
+        def fake(post, pasta, seco=False, so_reconciliar=False):
+            return 0
+
+        with patch.dict(os.environ, {"MAQUINA_AGENDA_DIR": destino}), patch.object(mp, "CORTE_NOTURNO", (0, 0)):
+            self.assertEqual(self._rodar(csv_file, fake), 0)
+        with open(os.path.join(destino, "agenda_mishyo.json"), encoding="utf-8") as f:
+            agenda = json.load(f)
+        self.assertEqual([i["id"] for i in agenda["pendentes"]], ["hoje"])
 
 if __name__ == "__main__":
     unittest.main()

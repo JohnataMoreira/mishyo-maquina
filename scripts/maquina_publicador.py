@@ -70,7 +70,9 @@ TZ_BRT = timezone(timedelta(hours=-3))
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 ESPERA_ESPELHO_S = 90
 INTERVALO_MINIMO_S = 2 * 3600  # No mínimo 2 horas entre posts publicados
-ATRASO_MAXIMO_S = 2 * 3600  # Item vencido há mais de 2h não sai sozinho: só reconcilia o que já está no ar
+ATRASO_MAXIMO_S = 3 * 3600  # Catch-up: item vencido há mais de 3h não sai sozinho (vira alerta); só reconcilia o que já está no ar
+CORTE_NOTURNO = (22, 30)  # Depois das 22:30 nada novo é publicado; o item fica para o alerta de atraso
+CHAMADAS_COMPOSIO = 0  # Contador de chamadas da rodada (teto mensal do plano grátis)
 AUTO_EXPIRAR_S = 24 * 3600  # Item vencido há mais de 24h sem publicar → expira automaticamente na fila
 
 
@@ -165,15 +167,11 @@ def log_repo(mensagem, status="✅ Concluída"):
             f.write(linha)
     except Exception as e:
         log(f"aviso: falha ao escrever no LOG.md ({e})")
-    try:
-        os.makedirs(os.path.dirname(REPO_LOG), exist_ok=True)
-        with open(REPO_LOG, "a", encoding="utf-8") as f:
-            f.write(linha)
-    except Exception as e:
-        log(f"aviso: falha ao escrever no LOG.md ({e})")
 
 
 def run(tool, data, account=None):
+    global CHAMADAS_COMPOSIO
+    CHAMADAS_COMPOSIO += 1
     cmd = [C, "execute", tool, "-d", json.dumps(data, ensure_ascii=False)]
     if account:
         cmd += ["--account", account]
@@ -297,6 +295,7 @@ def disparar_aviso_falha(janela: str, motivos: list[str]):
     )
     log(f"ALERTA: {titulo}")
     log_repo(f"ALERTA: 3 tentativas falharam na janela {janela}", status="❌ Falha 3x")
+    alerta_telegram(f"❌ Máquina de Posts — 3 tentativas falharam na janela {janela}\n" + "\n".join(f"- {m}" for m in motivos))
     try:
         gh_bin = shutil.which("gh")
         if gh_bin:
@@ -312,6 +311,81 @@ def disparar_aviso_falha(janela: str, motivos: list[str]):
                 log(f"aviso: gh issue create retornou {res.returncode}: {res.stderr.strip()[:200]}")
     except Exception as exc:
         log(f"aviso: não foi possível criar issue no GitHub ({exc})")
+
+
+def alerta_telegram(texto: str) -> bool:
+    """Envia alerta pela Bot API do Telegram, direto (sem Composio). Sem segredos no ambiente, só registra no log."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        log("aviso: alerta do Telegram não enviado (segredos ausentes no ambiente)")
+        return False
+    try:
+        corpo = json.dumps({"chat_id": chat, "text": texto[:3500], "disable_web_page_preview": True}).encode()
+        req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=corpo,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status == 200
+    except Exception as exc:
+        # Nunca registrar a URL: ela contém o token.
+        log(f"aviso: falha ao enviar alerta do Telegram ({exc.__class__.__name__})")
+        return False
+
+
+def alertar_atraso(pid: str, marca_id: str, quando_str: str, motivo: str):
+    """Item que perdeu o catch-up nunca expira em silêncio: avisa uma única vez."""
+    estado = carregar_estado()
+    dados = estado.setdefault(pid, {})
+    if dados.get("alerta_atraso"):
+        return
+    enviado = alerta_telegram(
+        f"⚠️ Máquina de Posts — post NÃO publicado\n"
+        f"Conta: {MARCAS[marca_id]['nome']}\nPost: {pid}\nHorário previsto: {quando_str}\nMotivo: {motivo}\n"
+        f"Para publicar: ajuste o campo 'quando' na fila. Sem ação, expira em 24 h."
+    )
+    if enviado:
+        dados["alerta_atraso"] = f"{agora_brt():%Y-%m-%d %H:%M}"
+        salvar_estado(estado)
+
+
+def gravar_pendentes(marca_id: str, filas: list, nao_antes=None):
+    """Grava os horários pendentes da marca (sem conteúdo) para a guarda do workflow decidir a próxima rodada."""
+    destino = os.environ.get("MAQUINA_AGENDA_DIR")
+    if not destino:
+        return
+    estado = carregar_estado()
+    validos = MARCAS[marca_id]["status_validos"]
+    itens = []
+    for fpath in filas:
+        try:
+            with open(fpath, encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+        except OSError:
+            continue
+        for row in rows:
+            st = (row.get("status") or "agendado").strip().lower()
+            quando = (row.get("quando") or "").strip()
+            pid = (row.get("id") or "").strip()
+            if st not in validos or not quando or not pid:
+                continue
+            try:
+                datetime.strptime(quando, "%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+            d = estado.get(pid, {})
+            if marca_id == "mishyo" and d.get("ig_id") and d.get("fb_id") and d.get("th_id"):
+                continue
+            if marca_id == "johnata" and d.get("linkedin_id") and d.get("devto_id"):
+                continue
+            itens.append({"id": pid, "quando": quando})
+    os.makedirs(destino, exist_ok=True)
+    with open(os.path.join(destino, f"agenda_{marca_id}.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "marca": marca_id,
+            "pendentes": itens,
+            "nao_antes_de": f"{nao_antes:%Y-%m-%d %H:%M}" if nao_antes else None,
+            "chamadas_composio": CHAMADAS_COMPOSIO,
+        }, f, ensure_ascii=False)
 
 
 def conferir_travas_gerais(seco=False, url_site=None):
@@ -1111,6 +1185,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                     delta_s = (agora - ultimo_ts).total_seconds()
                     if delta_s < INTERVALO_MINIMO_S:
                         log(f"[{pid}] Intervalo mínimo de 2h ainda não atingido ({int(delta_s / 60)} min desde o último post), aguardando")
+                        gravar_pendentes(marca_id, filas, nao_antes=ultimo_ts + timedelta(seconds=INTERVALO_MINIMO_S))
                         return 0
 
                 pasta_post = os.path.join(pasta_semana, "posts", row.get("pasta", pid))
@@ -1137,16 +1212,23 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                     }
 
                 atrasado = (agora - dt_quando).total_seconds() > ATRASO_MAXIMO_S
+                if not atrasado and (agora.hour, agora.minute) >= CORTE_NOTURNO:
+                    log(f"[{pid}] depois das {CORTE_NOTURNO[0]}:{CORTE_NOTURNO[1]:02d} nada novo é publicado; aguardando")
+                    continue
                 antes = dict(carregar_estado().get(pid, {}))
                 if marca_id == "johnata":
                     if atrasado:
                         log(f"[{pid}] Johnata: atrasado demais para sair sozinho; fica para o Johnata decidir")
+                        if not seco:
+                            alertar_atraso(pid, marca_id, quando_str, "passou do catch-up de 3 h sem publicar")
                         continue
                     rc = publicar_item_johnata(post_data, pasta_post, canais_solicitados=row.get("canais"), seco=seco)
                 else:
                     rc = publicar_item(post_data, pasta_post, seco=seco, so_reconciliar=atrasado)
 
                 if rc == 3:
+                    if not seco:
+                        alertar_atraso(pid, marca_id, quando_str, "passou do catch-up de 3 h e não está no ar")
                     continue  # atrasado e fora do ar: não publica conteúdo fora de hora
 
                 if rc == 0 and not seco:
@@ -1168,6 +1250,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
     if marca_id == "mishyo" and not seco:
         conferente_de_canais()
 
+    gravar_pendentes(marca_id, filas)
     return 0
 
 
