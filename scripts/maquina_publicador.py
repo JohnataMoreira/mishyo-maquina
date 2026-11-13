@@ -105,6 +105,10 @@ CHAMADAS_COMPOSIO = 0  # Contador de chamadas da rodada (teto mensal do plano gr
 AUTO_EXPIRAR_S = 24 * 3600  # Item vencido há mais de 24h sem publicar → expira automaticamente na fila
 
 
+class PostInvalido(RuntimeError):
+    """Conteúdo do post fora da regra: o item é pulado e avisado, nunca derruba a rodada."""
+
+
 def houve_post_novo(antes: dict, depois: dict) -> bool:
     """True se a rodada criou post novo pela API (e não só reconheceu um que já estava no ar)."""
     return any(
@@ -387,6 +391,30 @@ def alertar_atraso(pid: str, marca_id: str, quando_str: str, motivo: str):
         salvar_estado(estado)
 
 
+def alertar_invalido(pid: str, marca_id: str, quando_str: str, motivo: str):
+    """Post fora da regra não trava a fila nem falha em silêncio: avisa uma vez por motivo."""
+    estado = carregar_estado()
+    dados = estado.setdefault(pid, {})
+    if dados.get("alerta_invalido") == motivo[:200]:
+        return
+    try:
+        previsto = datetime.strptime(quando_str, "%Y-%m-%d %H:%M").strftime("%d/%m %H:%M")
+    except ValueError:
+        previsto = quando_str
+    enviado = alerta_telegram(
+        f"🟠 POST COM ERRO\n"
+        f"📱 {MARCAS[marca_id]['nome']}\n"
+        f"📝 {re.sub(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}-(?:[0-9]{2,4}h?-)?', '', pid)}\n"
+        f"🕐 previsto {previsto}\n"
+        f"❓ {motivo[:200]}\n"
+        f"👉 corrija o post na fila\n"
+        f"⏳ sai sozinho se corrigir em até 3 h"
+    )
+    if enviado:
+        dados["alerta_invalido"] = motivo[:200]
+        salvar_estado(estado)
+
+
 def gravar_pendentes(marca_id: str, filas: list, nao_antes=None):
     """Grava os horários pendentes da marca (sem conteúdo) para a guarda do workflow decidir a próxima rodada."""
     destino = os.environ.get("MAQUINA_AGENDA_DIR")
@@ -465,15 +493,15 @@ def conferir_post(post, marca="mishyo"):
         obrigatoria = MARCAS[marca]["meta"]["tag_obrigatoria"]
         tags = [t.lower() for t in re.findall(r"#\w+", post.get("legenda", ""))]
         if len(tags) > 5 or obrigatoria not in tags:
-            raise RuntimeError(f"hashtags fora da regra (máximo 5 e sempre {obrigatoria}): {tags}")
+            raise PostInvalido(f"hashtags fora da regra (máximo 5 e sempre {obrigatoria}): {tags}")
 
         threads_texto = post.get("threads_texto", "")
         if len(threads_texto.encode("utf-8")) > 500:
-            raise RuntimeError(f"texto do Threads passa de 500 bytes ({len(threads_texto.encode('utf-8'))} bytes)")
+            raise PostInvalido(f"texto do Threads passa de 500 bytes ({len(threads_texto.encode('utf-8'))} bytes)")
         if re.search(r"#\w+", threads_texto):
-            raise RuntimeError("hashtag no texto do Threads: use threads_tag")
+            raise PostInvalido("hashtag no texto do Threads: use threads_tag")
         if chave(post.get("legenda", ""))[:30] != chave(threads_texto)[:30]:
-            raise RuntimeError("legenda e texto do Threads precisam começar igual (anti-duplicação)")
+            raise PostInvalido("legenda e texto do Threads precisam começar igual (anti-duplicação)")
 
         formato = post.get("formato", "carrossel").lower()
         laminas = post.get("laminas", [])
@@ -481,16 +509,18 @@ def conferir_post(post, marca="mishyo"):
 
         if formato == "carrossel":
             if not 2 <= len(laminas) <= 10:
-                raise RuntimeError(f"carrossel deve ter de 2 a 10 lâminas: {len(laminas)}")
+                raise PostInvalido(f"carrossel deve ter de 2 a 10 lâminas: {len(laminas)}")
             if len(alt) != len(laminas):
-                raise RuntimeError(f"lâminas ({len(laminas)}) e textos alternativos ({len(alt)}) não batem")
+                raise PostInvalido(f"lâminas ({len(laminas)}) e textos alternativos ({len(alt)}) não batem")
         elif formato in ("imagem", "video"):
             if len(laminas) < 1:
-                raise RuntimeError("post precisa de pelo menos 1 arquivo de mídia")
+                raise PostInvalido("post precisa de pelo menos 1 arquivo de mídia")
+        else:
+            raise PostInvalido(f"formato desconhecido: {formato!r} (use carrossel, imagem ou video)")
     elif marca == "johnata":
         titulo = post.get("titulo") or post.get("title") or post.get("id")
         if not titulo:
-            raise RuntimeError("post do Johnata precisa de título ou id")
+            raise PostInvalido("post do Johnata precisa de título ou id")
 
 
 def recentes_ig(limit=15):
@@ -527,16 +557,16 @@ def publicar_item(post, pasta_post, seco=False, so_reconciliar=False):
     se não estiver, devolve 3 e não publica nada.
     """
     pid = post["id"]
+    conferir_post(post, MARCA_ATIVA)
     k = chave(post["legenda"])
     formato = post.get("formato", "carrossel").lower()
-    conferir_post(post, MARCA_ATIVA)
 
     if DRIVE_WORKSPACE:
         DRIVE_WORKSPACE.materialize_media(Path(pasta_post), [str(n) for n in post["laminas"]])
     laminas = [os.path.join(pasta_post, n) for n in post["laminas"]]
     for p in laminas:
         if not os.path.exists(p):
-            raise RuntimeError(f"Arquivo não encontrado: {p}")
+            raise PostInvalido(f"arquivo de mídia não encontrado: {os.path.basename(p)}")
     
     ids = [
         DRIVE_WORKSPACE.drive_id_for_local_file(Path(p)) if DRIVE_WORKSPACE else id_drive(p)
@@ -1185,22 +1215,11 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                     log(f"[{pid}] status pausado, pulando")
                     continue
 
-                # EARS 3: Para Johnata, apenas item aprovado pode sair. Rascunho nunca!
-                if marca_id == "johnata":
-                    if status != "aprovado":
-                        log(f"[{pid}] Johnata: status '{status}' != 'aprovado', pulando (rascunho nunca publica)")
-                        continue
-                else:
-                    if status not in ("aprovado", "agendado"):
-                        log(f"[{pid}] Mishyo: status '{status}' não aprovado/agendado, pulando")
-                        continue
-
-                # Se já publicado
-                if status in ("publicado", "concluido"):
-                    if marca_id in META and estado.get(pid, {}).get("ig_id"):
-                        continue
-                    if marca_id == "johnata" and (estado.get(pid, {}).get("linkedin_id") or estado.get(pid, {}).get("devto_id")):
-                        continue
+                # Só sai o status que a marca aceita (registro MARCAS). Rascunho nunca publica.
+                if status not in cfg["status_validos"]:
+                    log(f"[{pid}] {cfg['nome']}: status '{status}' não publica "
+                        f"(aceitos: {', '.join(sorted(cfg['status_validos']))}), pulando")
+                    continue
 
                 if not quando_str:
                     continue
@@ -1258,15 +1277,22 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                     log(f"[{pid}] depois das {CORTE_NOTURNO[0]}:{CORTE_NOTURNO[1]:02d} nada novo é publicado; aguardando")
                     continue
                 antes = dict(carregar_estado().get(pid, {}))
-                if marca_id == "johnata":
-                    if atrasado:
-                        log(f"[{pid}] Johnata: atrasado demais para sair sozinho; fica para o Johnata decidir")
-                        if not seco:
-                            alertar_atraso(pid, marca_id, quando_str, "passou de 3 h sem publicar")
-                        continue
-                    rc = publicar_item_johnata(post_data, pasta_post, canais_solicitados=row.get("canais"), seco=seco)
-                else:
-                    rc = publicar_item(post_data, pasta_post, seco=seco, so_reconciliar=atrasado)
+                try:
+                    if marca_id == "johnata":
+                        if atrasado:
+                            log(f"[{pid}] Johnata: atrasado demais para sair sozinho; fica para o Johnata decidir")
+                            if not seco:
+                                alertar_atraso(pid, marca_id, quando_str, "passou de 3 h sem publicar")
+                            continue
+                        rc = publicar_item_johnata(post_data, pasta_post, canais_solicitados=row.get("canais"), seco=seco)
+                    else:
+                        rc = publicar_item(post_data, pasta_post, seco=seco, so_reconciliar=atrasado)
+                except PostInvalido as exc:
+                    # Conteúdo fora da regra: pula só este item; os seguintes e as outras marcas seguem.
+                    log(f"[{pid}] post fora da regra, pulado: {exc}")
+                    if not seco:
+                        alertar_invalido(pid, marca_id, quando_str, str(exc))
+                    continue
 
                 if rc == 3:
                     if not seco:
@@ -1296,28 +1322,112 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
     return 0
 
 
-def main():
+def validar_fila_marca(marca_id: str) -> list:
+    """Confere TODOS os itens pendentes da marca (vencidos ou futuros) sem publicar nada.
+
+    É a validação da aprovação: roda quando a fila é montada ou aprovada, para o erro aparecer
+    antes do horário do post. Devolve uma lista de (id, quando, nivel, mensagem); nivel "erro"
+    impede o post de sair, "aviso" não impede.
+    """
+    cfg = MARCAS[marca_id]
+    intervalo_s = cfg.get("intervalo_s", INTERVALO_MINIMO_S)
+    agora = agora_brt()
+    achados, vistos, horarios = [], set(), []
+    for fpath in sorted(glob.glob(os.path.join(DRIVE_BASE, "*/fila.csv"))):
+        pasta_semana = os.path.dirname(fpath)
+        with open(fpath, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        for row in rows:
+            pid = (row.get("id") or "").strip()
+            status = (row.get("status") or "agendado").strip().lower()
+            quando_str = (row.get("quando") or "").strip()
+            if status not in cfg["status_validos"]:
+                continue
+
+            def achado(nivel, msg):
+                achados.append((pid or "(sem id)", quando_str, nivel, msg))
+
+            if not pid:
+                achado("erro", "linha sem id")
+                continue
+            if pid in vistos:
+                achado("erro", "id repetido na fila")
+            vistos.add(pid)
+            try:
+                dt = datetime.strptime(quando_str, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
+            except ValueError:
+                achado("erro", f"data/hora inválida: {quando_str!r} (use AAAA-MM-DD HH:MM)")
+                continue
+            if dt.hour < 7 or (dt.hour, dt.minute) >= CORTE_NOTURNO:
+                achado("erro", "horário fora da janela (nada sai antes das 7h nem depois das "
+                               f"{CORTE_NOTURNO[0]}:{CORTE_NOTURNO[1]:02d})")
+            if (agora - dt).total_seconds() > ATRASO_MAXIMO_S:
+                achado("aviso", "vencido há mais de 3 h: não sai sozinho, ajuste o horário")
+            horarios.append((dt, pid))
+
+            pasta_post = os.path.join(pasta_semana, "posts", (row.get("pasta") or pid).strip())
+            pjson = os.path.join(pasta_post, "post.json")
+            if os.path.exists(pjson):
+                try:
+                    with open(pjson, encoding="utf-8") as pf:
+                        post = json.load(pf)
+                except ValueError as exc:
+                    achado("erro", f"post.json ilegível ({exc})")
+                    continue
+            elif marca_id in META:
+                achado("erro", "post.json não encontrado na pasta do post")
+                continue
+            else:
+                post = {"id": pid, "titulo": row.get("titulo") or row.get("title") or pid,
+                        "legenda": row.get("legenda") or row.get("texto") or ""}
+            try:
+                conferir_post(post, marca_id)
+            except PostInvalido as exc:
+                achado("erro", str(exc))
+                continue
+            if marca_id in META:
+                faltando = [n for n in post.get("laminas", []) if not os.path.exists(os.path.join(pasta_post, str(n)))]
+                if faltando:
+                    achado("erro", f"arquivo de mídia não encontrado: {', '.join(map(str, faltando))}")
+            elif not (post.get("legenda") or post.get("texto") or post.get("body_markdown")):
+                achado("erro", "post sem texto")
+
+    horarios.sort()
+    for (t1, _), (t2, pid2) in zip(horarios, horarios[1:]):
+        if (t2 - t1).total_seconds() < intervalo_s:
+            achados.append((pid2, f"{t2:%Y-%m-%d %H:%M}", "aviso",
+                            f"menos de {intervalo_s // 60} min depois do post anterior: vai sair atrasado"))
+    return achados
+
+
+def validar(marcas: list, avisar: bool = False) -> int:
+    """Modo --validar: confere as filas pela pasta local do Drive (sem Composio) e devolve 1 se houver erro."""
+    global DRIVE_BASE
+    total_erros = 0
+    for marca_id in marcas:
+        DRIVE_BASE = MARCAS[marca_id]["drive_base"]
+        if not os.path.isdir(DRIVE_BASE):
+            print(f"== {MARCAS[marca_id]['nome']}: pasta da fila não encontrada ({DRIVE_BASE})")
+            total_erros += 1
+            continue
+        achados = validar_fila_marca(marca_id)
+        erros = [a for a in achados if a[2] == "erro"]
+        total_erros += len(erros)
+        print(f"== {MARCAS[marca_id]['nome']}: {len(erros)} erro(s), {len(achados) - len(erros)} aviso(s)")
+        for pid, quando, nivel, msg in achados:
+            print(f"  [{nivel}] {quando} {pid}: {msg}")
+        if avisar and erros:
+            linhas = "\n".join(f"📝 {pid}\n❓ {msg[:120]}" for pid, _, _, msg in erros[:5])
+            alerta_telegram(f"🟠 FILA COM ERRO\n📱 {MARCAS[marca_id]['nome']}\n🔢 {len(erros)} post(s)\n{linhas}\n👉 corrija antes do horário")
+    return 1 if total_erros else 0
+
+
+def rodar_marca(marca_id: str, fonte: str, seco: bool, caminho):
+    """Roda uma marca do começo ao fim. Qualquer erro sobe para o main, que segue para a próxima marca."""
     global BASE, STATE, LOGF, DRIVE_BASE, DRIVE_WORKSPACE
 
-    seco = "--dry-run" in sys.argv
-    fonte_arg = next((a for a in sys.argv[1:] if a.startswith("--fonte=")), "--fonte=drive")
-    fonte = fonte_arg.split("=", 1)[1].strip().lower()
-    if fonte not in ("drive", "pasta"):
-        raise RuntimeError("fonte inválida; use --fonte=drive ou --fonte=pasta")
-
-    marca_arg = next((a for a in sys.argv[1:] if a.startswith("--marca=")), None)
-    if marca_arg:
-        marca_escolhida = marca_arg.split("=", 1)[1].strip().lower()
-        if marca_escolhida not in MARCAS:
-            raise RuntimeError(f"marca inválida: {marca_escolhida}; use mishyo, johnata ou viceradar")
-        marcas_para_rodar = [marca_escolhida]
-    else:
-        marcas_para_rodar = ["mishyo", "johnata", "viceradar"]
-
-    caminho = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
-
-    for marca_id in marcas_para_rodar:
-        cfg = MARCAS[marca_id]
+    cfg = MARCAS[marca_id]
+    try:
         if fonte == "drive":
             DRIVE_WORKSPACE = DriveWorkspace(run, DRIVE_ACCOUNT, root_folder_name=cfg["root_folder"], queue_folder_name="fila")
             try:
@@ -1342,17 +1452,19 @@ def main():
                 fcntl.flock(trava, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 log(f"[{marca_id}] Outra execução em andamento; rodada pulada.")
-                continue
+                return
 
         try:
             if "--conferente-so" in sys.argv:
                 if marca_id in META:
+                    ativar_marca(marca_id)
                     conferente_de_canais()
-                continue
+                return
 
             if "--metricas-so" in sys.argv:
+                ativar_marca(marca_id)
                 coletar_metricas(marca=marca_id)
-                continue
+                return
 
             executar_fila_marca(marca_id=marca_id, caminho_fila_csv=caminho, seco=seco)
         except Exception as exc:
@@ -1362,14 +1474,47 @@ def main():
                 except Exception as state_exc:
                     log(f"ERRO adicional: não foi possível gravar motivo no estado do Drive ({state_exc})")
             raise
-        finally:
-            if DRIVE_WORKSPACE:
-                DRIVE_WORKSPACE.close()
-                DRIVE_WORKSPACE = None
+    finally:
+        if DRIVE_WORKSPACE:
+            DRIVE_WORKSPACE.close()
+            DRIVE_WORKSPACE = None
 
+
+def main():
+    seco = "--dry-run" in sys.argv
+    fonte_arg = next((a for a in sys.argv[1:] if a.startswith("--fonte=")), "--fonte=drive")
+    fonte = fonte_arg.split("=", 1)[1].strip().lower()
+    if fonte not in ("drive", "pasta"):
+        raise RuntimeError("fonte inválida; use --fonte=drive ou --fonte=pasta")
+
+    marca_arg = next((a for a in sys.argv[1:] if a.startswith("--marca=")), None)
+    if marca_arg:
+        marca_escolhida = marca_arg.split("=", 1)[1].strip().lower()
+        if marca_escolhida not in MARCAS:
+            raise RuntimeError(f"marca inválida: {marca_escolhida}; use mishyo, johnata ou viceradar")
+        marcas_para_rodar = [marca_escolhida]
+    else:
+        marcas_para_rodar = ["mishyo", "johnata", "viceradar"]
+
+    if "--validar" in sys.argv:
+        return validar(marcas_para_rodar, avisar="--avisar" in sys.argv)
+
+    caminho = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+
+    # Cada marca roda isolada: a falha de uma não impede as seguintes. A rodada só termina
+    # vermelha (e avisa) depois de todas terem tido a sua vez.
+    falhas = []
+    for marca_id in marcas_para_rodar:
+        try:
+            rodar_marca(marca_id, fonte, seco, caminho)
+        except Exception as exc:
+            falhas.append(f"{marca_id}: {exc}")
+            print(f"ERRO na marca {marca_id}: {exc}", flush=True)
+
+    if falhas:
+        raise RuntimeError("rodada com falha em " + "; ".join(falhas)[:800])
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
