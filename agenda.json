@@ -3,82 +3,39 @@
   "mishyo": {
    "pendentes": [
     {
-     "id": "2026-11-08-13h-produto-arvore",
-     "quando": "2026-11-16 12:25"
+     "id": "antigo-no-ar",
+     "quando": "2026-11-13 06:18"
     },
     {
-     "id": "2026-11-09-09h-bisavos",
-     "quando": "2026-11-16 09:16"
+     "id": "hoje",
+     "quando": "2026-11-13 07:28"
     },
     {
-     "id": "2026-11-10-13h-produto-receita-bau",
-     "quando": "2026-11-17 12:26"
-    },
-    {
-     "id": "2026-11-11-09h-tradicao-natal",
-     "quando": "2026-11-17 08:44"
-    },
-    {
-     "id": "2026-11-11-13h-produto-convite-link",
-     "quando": "2026-11-18 12:24"
-    },
-    {
-     "id": "2026-11-11-20h-apelido-familia",
-     "quando": "2026-11-16 17:19"
-    },
-    {
-     "id": "2026-11-12-13h-produto-capsula-tempo",
-     "quando": "2026-11-19 12:01"
-    },
-    {
-     "id": "2026-11-13-09h-grave-voz",
-     "quando": "2026-11-13 09:21"
-    },
-    {
-     "id": "2026-11-13-13h-produto-privacidade-familia",
-     "quando": "2026-11-13 12:20"
-    },
-    {
-     "id": "2026-11-13-20h-voz-de-quem-ama-c2",
-     "quando": "2026-11-13 17:08"
-    },
-    {
-     "id": "2026-11-14-09h-historia-nova",
-     "quando": "2026-11-14 08:52"
-    },
-    {
-     "id": "2026-11-14-13h-produto-timeline-familia",
-     "quando": "2026-11-14 12:27"
-    },
-    {
-     "id": "2026-11-14-20h-almoco-domingo-c5",
-     "quando": "2026-11-14 17:36"
-    },
-    {
-     "id": "2026-11-15-09h-ouvir-mais-velhos",
-     "quando": "2026-11-15 09:13"
-    },
-    {
-     "id": "2026-11-15-13h-produto-marcar-foto",
-     "quando": "2026-11-15 12:15"
-    },
-    {
-     "id": "2026-11-15-20h-foto-sem-nome",
-     "quando": "2026-11-15 17:38"
+     "id": "depois",
+     "quando": "2026-11-13 07:38"
     }
    ],
    "nao_antes_de": null
   },
   "johnata": {
+   "pendentes": [
+    {
+     "id": "post-aprovado",
+     "quando": "2026-11-13 07:48"
+    }
+   ],
+   "nao_antes_de": null
+  },
+  "viceradar": {
    "pendentes": [],
    "nao_antes_de": null
   }
  },
- "ultima_rodada_completa": "2026-11-13 07:01",
+ "ultima_rodada_completa": "2026-11-13 08:01",
  "chamadas_composio": {
   "mes": "2026-11",
-  "total_mes": 50,
+  "total_mes": 81,
   "dia": "2026-11-13",
-  "total_dia": 21
+  "total_dia": 52
  }
 }
