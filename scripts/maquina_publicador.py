@@ -43,8 +43,23 @@ MARCAS = {
         "site_url": "https://mishyo.com",
         "status_validos": {"aprovado", "agendado"},
         "canais_padrao": ["instagram", "facebook", "threads"],
+        "meta": {"ig_account": "instagram_yacht-coarse", "ig_user_id": "29586430714275170", "fb_page_id": "1058406010693067",
+                 "th_account": "threads_ungone-cocky", "tag_obrigatoria": "#mishyo", "threads_tag": "mishyo"},
         "drive_base": os.path.expanduser(
             "~/Library/CloudStorage/GoogleDrive-johvsm@gmail.com/Meu Drive/Mishyo · Conteúdo das redes/fila"
+        ),
+    },
+    "viceradar": {
+        "nome": "ViceRadar",
+        "root_folder": "ViceRadar · Conteúdo",
+        "site_url": "https://viceradar.johvsm.workers.dev",
+        "status_validos": {"aprovado"},
+        "canais_padrao": ["instagram", "facebook", "threads"],
+        "intervalo_s": 25 * 60,
+        "meta": {"ig_account": "instagram_sigger-linley", "ig_user_id": "28962680710062845", "fb_page_id": "1432965466563263",
+                 "th_account": "threads_borg-rumor", "tag_obrigatoria": "#gta6", "threads_tag": "GTA 6"},
+        "drive_base": os.path.expanduser(
+            "~/Library/CloudStorage/GoogleDrive-johvsm@gmail.com/Meu Drive/ViceRadar · Conteúdo/fila"
         ),
     },
     "johnata": {
@@ -67,6 +82,20 @@ DRIVE_BASE = MARCAS["mishyo"]["drive_base"]
 DRIVE_WORKSPACE = None
 
 TZ_BRT = timezone(timedelta(hours=-3))
+META = {m for m, c in MARCAS.items() if c.get("meta")}  # marcas que publicam em Instagram + Facebook + Threads
+MARCA_ATIVA = "mishyo"
+TH_TAG = "mishyo"
+
+
+def ativar_marca(marca_id: str):
+    """Aponta as contas (Instagram, Página do Facebook, Threads) para a marca da rodada."""
+    global IG_ACCOUNT, TH_ACCOUNT, IG_USER_ID, FB_PAGE_ID, MARCA_ATIVA, TH_TAG
+    MARCA_ATIVA = marca_id
+    m = MARCAS[marca_id].get("meta")
+    if m:
+        IG_ACCOUNT, TH_ACCOUNT = m["ig_account"], m["th_account"]
+        IG_USER_ID, FB_PAGE_ID, TH_TAG = m["ig_user_id"], m["fb_page_id"], m["threads_tag"]
+
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 ESPERA_ESPELHO_S = 90
 INTERVALO_MINIMO_S = 2 * 3600  # No mínimo 2 horas entre posts publicados
@@ -242,8 +271,9 @@ def id_drive(caminho):
     raise RuntimeError(f"lâmina sem ID do Drive (ainda sincronizando?): {caminho}")
 
 
-def normalizar_fb_id(post_id, page_id=FB_PAGE_ID):
+def normalizar_fb_id(post_id, page_id=None):
     """Garante que o ID do Facebook tenha o prefixo {page_id}_{post_id} para insights e chamadas."""
+    page_id = page_id or FB_PAGE_ID
     if not post_id or post_id == "sem-id":
         return post_id
     s = str(post_id).strip()
@@ -382,7 +412,7 @@ def gravar_pendentes(marca_id: str, filas: list, nao_antes=None):
             except ValueError:
                 continue
             d = estado.get(pid, {})
-            if marca_id == "mishyo" and d.get("ig_id") and d.get("fb_id") and d.get("th_id"):
+            if marca_id in META and d.get("ig_id") and d.get("fb_id") and d.get("th_id"):
                 continue
             if marca_id == "johnata" and d.get("linkedin_id") and d.get("devto_id"):
                 continue
@@ -431,10 +461,11 @@ def conferir_limite_publicacao():
 
 def conferir_post(post, marca="mishyo"):
     """Valida as regras de conteúdo e copy conforme a marca."""
-    if marca == "mishyo":
+    if marca in META:
+        obrigatoria = MARCAS[marca]["meta"]["tag_obrigatoria"]
         tags = [t.lower() for t in re.findall(r"#\w+", post.get("legenda", ""))]
-        if len(tags) > 5 or "#mishyo" not in tags:
-            raise RuntimeError(f"hashtags fora da regra (máximo 5 e sempre #mishyo): {tags}")
+        if len(tags) > 5 or obrigatoria not in tags:
+            raise RuntimeError(f"hashtags fora da regra (máximo 5 e sempre {obrigatoria}): {tags}")
 
         threads_texto = post.get("threads_texto", "")
         if len(threads_texto.encode("utf-8")) > 500:
@@ -498,7 +529,7 @@ def publicar_item(post, pasta_post, seco=False, so_reconciliar=False):
     pid = post["id"]
     k = chave(post["legenda"])
     formato = post.get("formato", "carrossel").lower()
-    conferir_post(post)
+    conferir_post(post, MARCA_ATIVA)
 
     if DRIVE_WORKSPACE:
         DRIVE_WORKSPACE.materialize_media(Path(pasta_post), [str(n) for n in post["laminas"]])
@@ -627,16 +658,16 @@ def publicar_item(post, pasta_post, seco=False, so_reconciliar=False):
                     itens = [{"media_type": "IMAGE", "media_url": u, "alt_text": a} for u, a in zip(urls, post["alt"])]
                     d = run("THREADS_CREATE_AND_SHARE_POST",
                             {"user_id": "me", "media_type": "CAROUSEL", "text": post["threads_texto"],
-                             "topic_tag": post.get("threads_tag", "mishyo"), "carousel_items": itens}, TH_ACCOUNT).get("data") or {}
+                             "topic_tag": post.get("threads_tag", TH_TAG), "carousel_items": itens}, TH_ACCOUNT).get("data") or {}
                 elif formato == "imagem":
                     d = run("THREADS_CREATE_AND_SHARE_POST",
                             {"user_id": "me", "media_type": "IMAGE", "image_url": urls[0],
-                             "text": post["threads_texto"], "topic_tag": post.get("threads_tag", "mishyo"),
+                             "text": post["threads_texto"], "topic_tag": post.get("threads_tag", TH_TAG),
                              "alt_text": (post.get("alt") or [""])[0]}, TH_ACCOUNT).get("data") or {}
                 elif formato == "video":
                     d = run("THREADS_CREATE_AND_SHARE_POST",
                             {"user_id": "me", "media_type": "VIDEO", "video_url": urls[0],
-                             "text": post["threads_texto"], "topic_tag": post.get("threads_tag", "mishyo")}, TH_ACCOUNT).get("data") or {}
+                             "text": post["threads_texto"], "topic_tag": post.get("threads_tag", TH_TAG)}, TH_ACCOUNT).get("data") or {}
 
                 novo = next((p for p in recentes_threads() if chave(p.get("text"))[:40] == k[:40]), None) or {}
                 st.update(th_id=novo.get("id") or d.get("id") or d.get("thread_id") or "sem-id",
@@ -904,15 +935,15 @@ def conferente_de_canais():
                 if len(urls) > 1:
                     itens = [{"media_type": "IMAGE", "media_url": u} for u in urls]
                     d = run("THREADS_CREATE_AND_SHARE_POST",
-                            {"user_id": "me", "media_type": "CAROUSEL", "text": t_th, "topic_tag": "mishyo", "carousel_items": itens},
+                            {"user_id": "me", "media_type": "CAROUSEL", "text": t_th, "topic_tag": TH_TAG, "carousel_items": itens},
                             TH_ACCOUNT).get("data") or {}
                 elif m_type == "VIDEO":
                     d = run("THREADS_CREATE_AND_SHARE_POST",
-                            {"user_id": "me", "media_type": "VIDEO", "video_url": urls[0], "text": t_th, "topic_tag": "mishyo"},
+                            {"user_id": "me", "media_type": "VIDEO", "video_url": urls[0], "text": t_th, "topic_tag": TH_TAG},
                             TH_ACCOUNT).get("data") or {}
                 else:
                     d = run("THREADS_CREATE_AND_SHARE_POST",
-                            {"user_id": "me", "media_type": "IMAGE", "image_url": urls[0], "text": t_th, "topic_tag": "mishyo"},
+                            {"user_id": "me", "media_type": "IMAGE", "image_url": urls[0], "text": t_th, "topic_tag": TH_TAG},
                             TH_ACCOUNT).get("data") or {}
 
                 novo_th = next((p for p in recentes_threads() if chave(p.get("text"))[:40] == k[:40]), None) or {}
@@ -939,7 +970,7 @@ def coletar_metricas(marca="mishyo", pasta_semana=None):
     base_dir = pasta_semana or (DRIVE_BASE if DRIVE_BASE else MARCAS[marca]["drive_base"])
     csv_path = os.path.join(base_dir, "metricas.csv")
 
-    if marca == "mishyo":
+    if marca in META:
         cabecalho = [
             "post_id", "tipo", "data_post", "data_coleta",
             "ig_views", "ig_reach", "ig_likes", "ig_comments", "ig_saved", "ig_shares",
@@ -1085,6 +1116,8 @@ def coletar_metricas(marca="mishyo", pasta_semana=None):
 def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
     """Lê a fila de posts de uma marca e publica os itens aprovados e vencidos."""
     cfg = MARCAS[marca_id]
+    ativar_marca(marca_id)
+    intervalo_s = cfg.get("intervalo_s", INTERVALO_MINIMO_S)
     log(f"=== Processando Marca: {cfg['nome']} ===")
 
     # Trava de site no ar por marca
@@ -1123,8 +1156,8 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
     # Confere horário do último post publicado por esta marca (intervalo mínimo 2h)
     ultimo_ts = None
     for dados in estado.values():
-        quando_item = dados.get("ig_quando") if marca_id == "mishyo" else (dados.get("linkedin_quando") or dados.get("devto_quando"))
-        if quando_item and dados.get(f"{'ig' if marca_id == 'mishyo' else 'linkedin'}_origem", "api") == "api":
+        quando_item = dados.get("ig_quando") if marca_id in META else (dados.get("linkedin_quando") or dados.get("devto_quando"))
+        if quando_item and dados.get(f"{'ig' if marca_id in META else 'linkedin'}_origem", "api") == "api":
             try:
                 dt = datetime.strptime(quando_item, "%Y-%m-%d %H:%M").replace(tzinfo=TZ_BRT)
                 if ultimo_ts is None or dt > ultimo_ts:
@@ -1164,7 +1197,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
 
                 # Se já publicado
                 if status in ("publicado", "concluido"):
-                    if marca_id == "mishyo" and estado.get(pid, {}).get("ig_id"):
+                    if marca_id in META and estado.get(pid, {}).get("ig_id"):
                         continue
                     if marca_id == "johnata" and (estado.get(pid, {}).get("linkedin_id") or estado.get(pid, {}).get("devto_id")):
                         continue
@@ -1182,7 +1215,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                     continue  # Ainda não venceu o horário
 
                 # Se já está publicado no estado
-                if marca_id == "mishyo":
+                if marca_id in META:
                     if estado.get(pid, {}).get("ig_id") and estado.get(pid, {}).get("fb_id") and estado.get(pid, {}).get("th_id"):
                         continue
                 elif marca_id == "johnata":
@@ -1192,9 +1225,9 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                 # Trava de intervalo mínimo entre posts
                 if ultimo_ts:
                     delta_s = (agora - ultimo_ts).total_seconds()
-                    if delta_s < INTERVALO_MINIMO_S:
-                        log(f"[{pid}] Intervalo mínimo de 2h ainda não atingido ({int(delta_s / 60)} min desde o último post), aguardando")
-                        gravar_pendentes(marca_id, filas, nao_antes=ultimo_ts + timedelta(seconds=INTERVALO_MINIMO_S))
+                    if delta_s < intervalo_s:
+                        log(f"[{pid}] Intervalo mínimo entre posts ainda não atingido ({int(delta_s / 60)} min desde o último post), aguardando")
+                        gravar_pendentes(marca_id, filas, nao_antes=ultimo_ts + timedelta(seconds=intervalo_s))
                         return 0
 
                 pasta_post = os.path.join(pasta_semana, "posts", row.get("pasta", pid))
@@ -1243,7 +1276,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                 if rc == 0 and not seco:
                     if DRIVE_WORKSPACE:
                         DRIVE_WORKSPACE.mark_published(Path(fpath), pid)
-                    if marca_id == "mishyo" and not houve_post_novo(antes, carregar_estado().get(pid, {})):
+                    if marca_id in META and not houve_post_novo(antes, carregar_estado().get(pid, {})):
                         # Só reconheceu um post que já estava no ar: não conta para o intervalo nem encerra a rodada.
                         log(f"[{pid}] reconciliado (já estava no ar); seguindo a fila")
                         continue
@@ -1256,7 +1289,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
         if not seco:
             coletar_metricas(marca=marca_id, pasta_semana=pasta_semana)
 
-    if marca_id == "mishyo" and not seco:
+    if marca_id in META and not seco:
         conferente_de_canais()
 
     gravar_pendentes(marca_id, filas)
@@ -1276,10 +1309,10 @@ def main():
     if marca_arg:
         marca_escolhida = marca_arg.split("=", 1)[1].strip().lower()
         if marca_escolhida not in MARCAS:
-            raise RuntimeError(f"marca inválida: {marca_escolhida}; use mishyo ou johnata")
+            raise RuntimeError(f"marca inválida: {marca_escolhida}; use mishyo, johnata ou viceradar")
         marcas_para_rodar = [marca_escolhida]
     else:
-        marcas_para_rodar = ["mishyo", "johnata"]
+        marcas_para_rodar = ["mishyo", "johnata", "viceradar"]
 
     caminho = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
 
@@ -1313,7 +1346,7 @@ def main():
 
         try:
             if "--conferente-so" in sys.argv:
-                if marca_id == "mishyo":
+                if marca_id in META:
                     conferente_de_canais()
                 continue
 

@@ -19,6 +19,7 @@ on:
           - todas
           - mishyo
           - johnata
+          - viceradar
         default: todas
       dry_run:
         description: 'Executar em modo simulação (--dry-run)'
