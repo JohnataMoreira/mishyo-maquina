@@ -46,7 +46,7 @@ async function rodada(env, instante) {
   } catch (_) {
     // Sem batimento, o vigia alerta sozinho.
   }
-  if (falha) await avisar(env, `❌ Máquina de Posts — o gatilho da Cloudflare não conseguiu disparar o GitHub (${falha}). O cron-job.org segue como segundo gatilho.`);
+  if (falha) await avisar(env, `🟠 GATILHO CLOUDFLARE FALHOU\n❓ ${falha}\n🟢 cron-job.org segue disparando`);
 }
 
 export default {

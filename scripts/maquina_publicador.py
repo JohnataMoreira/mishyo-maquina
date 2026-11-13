@@ -295,7 +295,7 @@ def disparar_aviso_falha(janela: str, motivos: list[str]):
     )
     log(f"ALERTA: {titulo}")
     log_repo(f"ALERTA: 3 tentativas falharam na janela {janela}", status="❌ Falha 3x")
-    alerta_telegram(f"❌ Máquina de Posts — 3 tentativas falharam na janela {janela}\n" + "\n".join(f"- {m}" for m in motivos))
+    alerta_telegram(f"🔴 3 FALHAS SEGUIDAS\n🕐 janela {janela}\n" + "\n".join(f"❓ {m}" for m in motivos[-3:]))
     try:
         gh_bin = shutil.which("gh")
         if gh_bin:
@@ -338,10 +338,19 @@ def alertar_atraso(pid: str, marca_id: str, quando_str: str, motivo: str):
     dados = estado.setdefault(pid, {})
     if dados.get("alerta_atraso"):
         return
+    # Mensagem curta, uma informação por linha: é lida quase sempre no relógio.
+    try:
+        previsto = datetime.strptime(quando_str, "%Y-%m-%d %H:%M").strftime("%d/%m %H:%M")
+    except ValueError:
+        previsto = quando_str
     enviado = alerta_telegram(
-        f"⚠️ Máquina de Posts — post NÃO publicado\n"
-        f"Conta: {MARCAS[marca_id]['nome']}\nPost: {pid}\nHorário previsto: {quando_str}\nMotivo: {motivo}\n"
-        f"Para publicar: ajuste o campo 'quando' na fila. Sem ação, expira em 24 h."
+        f"🔴 POST NÃO SAIU\n"
+        f"📱 {MARCAS[marca_id]['nome']}\n"
+        f"📝 {re.sub(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}-(?:[0-9]{2}h-)?', '', pid)}\n"
+        f"🕐 previsto {previsto}\n"
+        f"❓ {motivo}\n"
+        f"👉 ajuste o horário na fila\n"
+        f"⏳ expira em 24 h"
     )
     if enviado:
         dados["alerta_atraso"] = f"{agora_brt():%Y-%m-%d %H:%M}"
@@ -1220,7 +1229,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
                     if atrasado:
                         log(f"[{pid}] Johnata: atrasado demais para sair sozinho; fica para o Johnata decidir")
                         if not seco:
-                            alertar_atraso(pid, marca_id, quando_str, "passou do catch-up de 3 h sem publicar")
+                            alertar_atraso(pid, marca_id, quando_str, "passou de 3 h sem publicar")
                         continue
                     rc = publicar_item_johnata(post_data, pasta_post, canais_solicitados=row.get("canais"), seco=seco)
                 else:
@@ -1228,7 +1237,7 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
 
                 if rc == 3:
                     if not seco:
-                        alertar_atraso(pid, marca_id, quando_str, "passou do catch-up de 3 h e não está no ar")
+                        alertar_atraso(pid, marca_id, quando_str, "passou de 3 h e não está no ar")
                     continue  # atrasado e fora do ar: não publica conteúdo fora de hora
 
                 if rc == 0 and not seco:

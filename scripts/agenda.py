@@ -153,7 +153,7 @@ def cmd_falha():
     except Exception:
         pass
     url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{_repo()}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
-    texto = f"❌ Máquina de Posts — a rodada das {t:%H:%M} falhou.\nDetalhe: {url}\nA próxima tentativa é automática (até 15 min)."
+    texto = f"🔴 RODADA FALHOU\n🕐 {t:%H:%M}\n🔁 nova tentativa em até 15 min\n🔗 {url}"
     if token and chat:
         try:
             corpo = json.dumps({"chat_id": chat, "text": texto, "disable_web_page_preview": True}).encode()
