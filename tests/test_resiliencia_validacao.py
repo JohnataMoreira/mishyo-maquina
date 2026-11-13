@@ -167,5 +167,54 @@ class TestValidacaoDaFila(unittest.TestCase):
         self.assertIn("FILA COM ERRO", alerta.call_args[0][0])
 
 
+class TestGuardaTelaPreta(unittest.TestCase):
+    """Arte com um bloco grande, escuro e vazio no miolo (print do app que não carregou) não passa."""
+
+    setUp = base.TestMaquinaMultimarca.setUp
+    tearDown = base.TestMaquinaMultimarca.tearDown
+
+    def _arte(self, nome, com_tela_preta, ruido=False):
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            self.skipTest("Pillow não instalado")
+        im = Image.new("RGB", (1080, 1350), (240, 240, 232))
+        d = ImageDraw.Draw(im)
+        if com_tela_preta:
+            d.rectangle([578, 304, 969, 1025], fill=(22, 19, 16))
+            if ruido:  # tela que carregou: conteúdo claro dentro do aparelho
+                for y in range(320, 1010, 24):
+                    d.rectangle([600, y, 950, y + 12], fill=(245, 240, 230))
+        caminho = os.path.join(self.temp_dir, nome)
+        im.save(caminho)
+        return caminho
+
+    def test_acusa_tela_preta(self):
+        self.assertIn("bloco escuro", mp.conferir_tela_preta(self._arte("preta.png", True)) or "")
+
+    def test_nao_acusa_arte_boa(self):
+        self.assertIsNone(mp.conferir_tela_preta(self._arte("boa.png", False)))
+        self.assertIsNone(mp.conferir_tela_preta(self._arte("cheia.png", True, ruido=True)))
+
+    def test_validacao_da_fila_acusa_tela_preta(self):
+        from datetime import timedelta
+        semana = os.path.join(self.temp_dir, "fila", "semana")
+        pasta = os.path.join(semana, "posts", "p1")
+        os.makedirs(pasta, exist_ok=True)
+        amanha = (mp.agora_brt() + timedelta(days=1)).strftime("%Y-%m-%d")
+        with open(os.path.join(semana, "fila.csv"), "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "quando", "status"])
+            w.writerow(["p1", f"{amanha} 09:10", "agendado"])
+        with open(os.path.join(pasta, "post.json"), "w", encoding="utf-8") as pf:
+            json.dump({"id": "p1", "formato": "imagem", "laminas": ["a.png"], "alt": ["a"],
+                       "legenda": "Texto do post #mishyo", "threads_texto": "Texto do post"}, pf)
+        arte = self._arte("tmp.png", True)
+        os.replace(arte, os.path.join(pasta, "a.png"))
+        mp.DRIVE_BASE = os.path.join(self.temp_dir, "fila")
+        achados = mp.validar_fila_marca("mishyo")
+        self.assertTrue(any(n == "erro" and "bloco escuro" in m for _, _, n, m in achados), achados)
+
+
 if __name__ == "__main__":
     unittest.main()

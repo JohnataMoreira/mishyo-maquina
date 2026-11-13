@@ -1322,6 +1322,45 @@ def executar_fila_marca(marca_id="mishyo", caminho_fila_csv=None, seco=False):
     return 0
 
 
+def conferir_tela_preta(caminho: str):
+    """Procura um bloco grande e uniformemente escuro no miolo da arte (print do app que não carregou).
+
+    Devolve None quando está tudo bem, ou uma mensagem. Sem Pillow instalado, devolve None:
+    a conferência é um reforço da validação local, nunca um bloqueio da rodada.
+    """
+    try:
+        from PIL import Image, ImageStat
+    except ImportError:
+        return None
+    try:
+        with Image.open(caminho) as im:
+            cinza = im.convert("L")
+        w, h = cinza.size
+        mascara = cinza.point(lambda v: 255 if v < 45 else 0)
+        colunas = list(mascara.resize((w, 1), Image.BOX).tobytes())
+        linhas = list(mascara.resize((1, h), Image.BOX).tobytes())
+        xs = [i for i, v in enumerate(colunas) if v > 0.20 * 255]
+        ys = [i for i, v in enumerate(linhas) if v > 0.12 * 255]
+        if not xs or not ys:
+            return None
+        x0, x1, y0, y1 = xs[0], xs[-1] + 1, ys[0], ys[-1] + 1
+        area = (x1 - x0) * (y1 - y0)
+        # Bloco pequeno, ou que encosta nas bordas (arte de fundo escuro), não conta.
+        if area < 0.08 * w * h:
+            return None
+        if x0 < 0.02 * w or y0 < 0.02 * h or x1 > 0.98 * w or y1 > 0.98 * h:
+            return None
+        if mascara.crop((x0, y0, x1, y1)).histogram()[255] / area < 0.92:
+            return None
+        if ImageStat.Stat(cinza.crop((x0, y0, x1, y1))).stddev[0] > 8:
+            return None
+        pc = round(100 * area / (w * h))
+        return f"bloco escuro e vazio ocupando {pc}% da arte (tela do app que não carregou?)"
+    except Exception as exc:
+        log(f"aviso: conferência de tela preta falhou em {os.path.basename(caminho)} ({exc.__class__.__name__})")
+        return None
+
+
 def validar_fila_marca(marca_id: str) -> list:
     """Confere TODOS os itens pendentes da marca (vencidos ou futuros) sem publicar nada.
 
@@ -1389,6 +1428,13 @@ def validar_fila_marca(marca_id: str) -> list:
                 faltando = [n for n in post.get("laminas", []) if not os.path.exists(os.path.join(pasta_post, str(n)))]
                 if faltando:
                     achado("erro", f"arquivo de mídia não encontrado: {', '.join(map(str, faltando))}")
+                for nome in post.get("laminas", []):
+                    arte = os.path.join(pasta_post, str(nome))
+                    if not os.path.exists(arte):
+                        continue
+                    motivo = conferir_tela_preta(arte)
+                    if motivo:
+                        achado("erro", f"{nome}: {motivo}")
             elif not (post.get("legenda") or post.get("texto") or post.get("body_markdown")):
                 achado("erro", "post sem texto")
 
