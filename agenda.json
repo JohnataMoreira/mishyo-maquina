@@ -1,0 +1,60 @@
+{
+ "marcas": {
+  "mishyo": {
+   "pendentes": [
+    {
+     "id": "2026-11-12-13h-produto-capsula-tempo",
+     "quando": "2026-11-12 13:00"
+    },
+    {
+     "id": "2026-11-13-09h-grave-voz",
+     "quando": "2026-11-13 09:00"
+    },
+    {
+     "id": "2026-11-13-13h-produto-privacidade-familia",
+     "quando": "2026-11-13 13:00"
+    },
+    {
+     "id": "2026-11-13-20h-voz-de-quem-ama-c2",
+     "quando": "2026-11-13 17:00"
+    },
+    {
+     "id": "2026-11-14-09h-historia-nova",
+     "quando": "2026-11-14 09:00"
+    },
+    {
+     "id": "2026-11-14-13h-produto-timeline-familia",
+     "quando": "2026-11-14 13:00"
+    },
+    {
+     "id": "2026-11-14-20h-almoco-domingo-c5",
+     "quando": "2026-11-14 17:00"
+    },
+    {
+     "id": "2026-11-15-09h-ouvir-mais-velhos",
+     "quando": "2026-11-15 09:00"
+    },
+    {
+     "id": "2026-11-15-13h-produto-marcar-foto",
+     "quando": "2026-11-15 13:00"
+    },
+    {
+     "id": "2026-11-15-20h-foto-sem-nome",
+     "quando": "2026-11-15 17:00"
+    }
+   ],
+   "nao_antes_de": null
+  },
+  "johnata": {
+   "pendentes": [],
+   "nao_antes_de": null
+  }
+ },
+ "ultima_rodada_completa": "2026-11-12 23:05",
+ "chamadas_composio": {
+  "mes": "2026-11",
+  "total_mes": 29,
+  "dia": "2026-11-12",
+  "total_dia": 29
+ }
+}
