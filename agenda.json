@@ -68,10 +68,6 @@
   "viceradar": {
    "pendentes": [
     {
-     "id": "2026-11-13-1206-alerta-golpe-pc",
-     "quando": "2026-11-13 12:06"
-    },
-    {
      "id": "2026-11-13-1414-edicoes-carrossel",
      "quando": "2026-11-13 14:14"
     },
@@ -88,15 +84,15 @@
      "quando": "2026-11-13 18:56"
     }
    ],
-   "nao_antes_de": "2026-11-13 12:41"
+   "nao_antes_de": null
   }
  },
- "ultima_rodada_completa": "2026-11-13 12:25",
+ "ultima_rodada_completa": "2026-11-13 12:46",
  "chamadas_composio": {
   "mes": "2026-11",
-  "total_mes": 334,
+  "total_mes": 377,
   "dia": "2026-11-13",
-  "total_dia": 305
+  "total_dia": 348
  },
  "ultimo_alerta_falha": "2026-11-13 12:18"
 }
