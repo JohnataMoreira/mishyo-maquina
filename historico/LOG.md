@@ -28,3 +28,4 @@
 | 2026-11-13 | MAQUINA | 2026-11-13-1531-musica-festival publicado nos 3 canais: IG 18018129437750715 (api), FB 1432965466563263_122109985311535095 (api), TH 17882918898546994 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-13 | MAQUINA | 2026-11-13-20h-voz-de-quem-ama-c2 publicado nos 3 canais: IG 18112027238185420 (api), FB 1058406010693067_122136104762810781 (api), TH 18209853124373598 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
 | 2026-11-13 | MAQUINA | 2026-11-13-1739-comunidade-leonida publicado nos 3 canais: IG 17956965612036219 (api), FB 1432965466563263_122110013277535095 (api), TH 18450599518132341 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
+| 2026-11-13 | MAQUINA | 2026-11-13-1856-analise-caixa publicado nos 3 canais: IG 18093387644502115 (api), FB 1432965466563263_122110030533535095 (api), TH 17996848517847430 (api) | ✅ Concluída | `~/.mishyo_logs/maquina/estado.json` | — |
