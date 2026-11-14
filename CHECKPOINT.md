@@ -6,6 +6,7 @@ Repositório PÚBLICO: só código e histórico de publicação. Estratégia, de
 - `--validar` acusa erro quando um bloco grande, escuro e uniforme ocupa o miolo da arte sem encostar nas bordas (print do app que não carregou).
 - Sem Pillow instalado a conferência é pulada: reforço da validação local, nunca bloqueio da rodada.
 - Causa-raiz e correção do gerador: `QG/docs/MAQUINA_DE_POSTS.md` § 25. 34 testes.
+- Os 2 posts que tinham saído com a tela preta foram apagados nas 3 redes (Threads pela API; Instagram e Facebook à mão, porque nenhuma das duas apaga post por API nesta conta) e as peças corrigidas voltaram à fila em 17/11 17:12 e 18/11 09:07.
 
 # Atualizado: 13/11/2026 (~12h35, BRT) — Resiliência e validação na aprovação (`726beff`)
 - Post fora da regra (`PostInvalido`) é pulado com alerta único no Telegram; os seguintes saem.
