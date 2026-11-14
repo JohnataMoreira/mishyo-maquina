@@ -66,12 +66,12 @@
    "nao_antes_de": null
   }
  },
- "ultima_rodada_completa": "2026-11-13 21:01",
+ "ultima_rodada_completa": "2026-11-13 23:01",
  "chamadas_composio": {
   "mes": "2026-11",
-  "total_mes": 736,
+  "total_mes": 765,
   "dia": "2026-11-13",
-  "total_dia": 707
+  "total_dia": 736
  },
  "ultimo_alerta_falha": "2026-11-13 14:20"
 }
