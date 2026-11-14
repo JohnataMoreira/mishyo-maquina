@@ -295,6 +295,11 @@ def conferir_site_no_ar(url):
                 return True, None
             return False, f"HTTP {r.status}"
     except urllib.error.HTTPError as exc:
+        # Redirect é servidor no ar, só mudando de endereço. O urllib não segue 308
+        # sozinho, e johnatamoreira.com.br responde 308 para o www — isso adiava a
+        # rodada da marca Johnata sem o site estar fora. (Claude, 14/11/2026)
+        if exc.code in (301, 302, 303, 307, 308):
+            return True, None
         return False, f"HTTP {exc.code} ({exc.reason})"
     except Exception as exc:
         return False, f"Inacessível ({exc})"
